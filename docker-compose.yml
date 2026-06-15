@@ -1,0 +1,10 @@
+services:
+  cfpanel:
+    build: .
+    container_name: cf-panel
+    ports:
+      - "1000:80"
+    volumes:
+      # Живой код + персист SQLite-БД на хосте (для локального запуска/разработки)
+      - ./:/var/www/html
+    restart: unless-stopped

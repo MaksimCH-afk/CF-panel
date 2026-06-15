@@ -147,6 +147,43 @@ function cfBuildAuthHeaders($email, $apiKey, $authType = null) {
 }
 
 /**
+ * Преобразует неуспешный ответ Cloudflare в читаемое сообщение.
+ * Распознаёт типовые проблемы токена (нет прав / неверный токен).
+ *
+ * @param array $resp Результат cloudflareApiRequestDetailed
+ * @return string
+ */
+function cfReadableError($resp) {
+    if (!empty($resp['api_errors'])) {
+        $parts = [];
+        foreach ($resp['api_errors'] as $e) {
+            $code = $e['code'] ?? 0;
+            $msg = $e['message'] ?? 'Unknown';
+            if (in_array($code, [9109, 10000])) {
+                $msg = "недостаточно прав у токена ($msg)";
+            } elseif ($code == 1011) {
+                $msg = "недоступно для account-owned токена ($msg)";
+            } elseif ($code == 1000) {
+                $msg = "неверный токен/ключ ($msg)";
+            }
+            $parts[] = $msg;
+        }
+        return implode('; ', $parts);
+    }
+    if (!empty($resp['curl_error'])) {
+        return $resp['curl_error'];
+    }
+    if (!empty($resp['http_code'])) {
+        $hc = $resp['http_code'];
+        if ($hc == 401 || $hc == 403) {
+            return "недостаточно прав у токена или неверный токен (HTTP $hc)";
+        }
+        return 'HTTP ' . $hc;
+    }
+    return 'неизвестная ошибка';
+}
+
+/**
  * Получает ВСЕ зоны аккаунта Cloudflare с учётом пагинации.
  *
  * Cloudflare отдаёт максимум 50 зон на страницу. Старый код брал только первую

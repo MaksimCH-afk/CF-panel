@@ -51,11 +51,7 @@ try {
     $purgeResp = cloudflareApiRequestDetailed($pdo, $domain['email'], $domain['api_key'], "zones/$zoneId/purge_cache", 'POST', $payload, $proxies, $_SESSION['user_id']);
 
     if (!$purgeResp['success']) {
-        $err = 'Не удалось очистить кеш';
-        if (!empty($purgeResp['api_errors'])) {
-            $err .= ': ' . implode(', ', array_map(fn($e) => ($e['code'] ?? '?') . ' ' . ($e['message'] ?? 'unknown'), $purgeResp['api_errors']));
-        }
-        throw new Exception($err);
+        throw new Exception('Не удалось очистить кеш: ' . cfReadableError($purgeResp));
     }
 
     logAction($pdo, $_SESSION['user_id'], 'Cache Purged', "Domain: {$domain['domain']}, Zone: $zoneId, All: " . ($purgeEverything ? 'yes' : 'no'));

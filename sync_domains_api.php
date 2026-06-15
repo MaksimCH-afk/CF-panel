@@ -128,11 +128,13 @@ function syncDomain($pdo, $userId) {
                 $uniqueIps = array_unique($ips);
                 $result['dns_ip'] = implode(', ', $uniqueIps);
                 $result['a_records_count'] = count($records);
-                
+
                 if ($domain['dns_ip'] !== $result['dns_ip']) {
                     $result['changes'][] = "IP: {$domain['dns_ip']} → {$result['dns_ip']}";
                 }
             }
+        } elseif (empty($dnsResponse['success'])) {
+            $result['errors'][] = 'DNS: ' . cfReadableError($dnsResponse);
         }
     } catch (Exception $e) {
         $result['errors'][] = 'DNS: ' . $e->getMessage();
@@ -169,11 +171,13 @@ function syncDomain($pdo, $userId) {
             
             if ($sslMode) {
                 $result['ssl_mode'] = $sslMode;
-                
+
                 if ($domain['ssl_mode'] !== $result['ssl_mode']) {
                     $result['changes'][] = "SSL: {$domain['ssl_mode']} → {$result['ssl_mode']}";
                 }
             }
+        } elseif (empty($sslResponse['success'])) {
+            $result['errors'][] = 'SSL: ' . cfReadableError($sslResponse);
         }
     } catch (Exception $e) {
         $result['errors'][] = 'SSL: ' . $e->getMessage();

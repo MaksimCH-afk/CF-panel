@@ -207,25 +207,49 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Тип авторизации</label>
-                        <select name="auth_type" class="form-select" id="addAccountAuthType">
-                            <option value="global" selected>Global API Key (email + ключ)</option>
-                            <option value="token">API Token (Bearer)</option>
+                        <select name="auth_type" class="form-select" id="addAccountAuthType" onchange="updateAddAccountForm()">
+                            <option value="token" selected>API Token (рекомендуется)</option>
+                            <option value="global">Global API Key (email + ключ)</option>
                         </select>
-                        <small class="text-muted">Global API Key рекомендуется для большого числа сайтов.</small>
+                        <small class="text-muted" id="addAccountAuthHint">Создайте токен в Cloudflare с правами на нужные зоны/аккаунт.</small>
+                    </div>
+                    <div class="mb-3" id="addAccountEmailWrap" style="display:none;">
+                        <label class="form-label">Email <span class="text-muted">(для Global API Key)</span></label>
+                        <input type="email" name="email" id="addAccountEmail" class="form-control" placeholder="user@example.com">
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Email</label>
-                        <input type="email" name="email" class="form-control" placeholder="user@example.com">
-                        <small class="text-muted">Обязателен для Global API Key. Для API Token можно оставить пустым.</small>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">API Key / Token</label>
-                        <input type="text" name="api_key" class="form-control" placeholder="Cloudflare Global API Key или API Token" required>
+                        <label class="form-label" id="addAccountKeyLabel">API Token</label>
+                        <input type="text" name="api_key" id="addAccountKey" class="form-control" placeholder="Cloudflare API Token" required>
                     </div>
                     <button type="submit" name="add_account" class="btn btn-primary w-100">
                         <i class="fas fa-plus me-1"></i>Добавить аккаунт
                     </button>
                 </form>
+                <script>
+                function updateAddAccountForm() {
+                    var t = document.getElementById('addAccountAuthType').value;
+                    var emailWrap = document.getElementById('addAccountEmailWrap');
+                    var email = document.getElementById('addAccountEmail');
+                    var keyLabel = document.getElementById('addAccountKeyLabel');
+                    var key = document.getElementById('addAccountKey');
+                    var hint = document.getElementById('addAccountAuthHint');
+                    if (t === 'global') {
+                        emailWrap.style.display = '';
+                        email.required = true;
+                        keyLabel.textContent = 'Global API Key';
+                        key.placeholder = 'Cloudflare Global API Key (37 символов)';
+                        hint.textContent = 'Введите email аккаунта и Global API Key из Cloudflare.';
+                    } else {
+                        emailWrap.style.display = 'none';
+                        email.required = false;
+                        email.value = '';
+                        keyLabel.textContent = 'API Token';
+                        key.placeholder = 'Cloudflare API Token';
+                        hint.textContent = 'Создайте токен в Cloudflare с правами на нужные зоны/аккаунт.';
+                    }
+                }
+                updateAddAccountForm();
+                </script>
             </div>
         </div>
     </div>

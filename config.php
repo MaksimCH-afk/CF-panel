@@ -22,9 +22,14 @@ define('BASE_PATH', $basePath);
 define('ROOT_PATH', dirname(__FILE__) . '/');
 define('DB_PATH', ROOT_PATH . 'cloudflare_panel.db');
 
+// Версия панели (счётчик). Текущая — 3.0, следующие правки: 4.0, 5.0, ...
+define('PANEL_VERSION', '3.0');
+
 // Перенаправление на HTTPS, если соединение не защищено (исключая localhost, CLI и API файлы)
 if (php_sapi_name() !== 'cli') {
-    $isLocalhost = in_array($_SERVER['HTTP_HOST'], ['localhost', '127.0.0.1', '::1']);
+    // Сравниваем хост без порта, чтобы localhost:1000 и т.п. тоже считались локальными
+    $hostName = preg_replace('/:\d+$/', '', $_SERVER['HTTP_HOST'] ?? '');
+    $isLocalhost = in_array($hostName, ['localhost', '127.0.0.1', '::1']);
     $isApiFile = (
         isset($_SERVER['REQUEST_URI']) && 
         (strpos($_SERVER['REQUEST_URI'], 'queue_processor.php') !== false ||

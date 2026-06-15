@@ -1,3 +1,11 @@
+    <!-- Версия панели (счётчик) -->
+    <div id="panelVersionBadge" style="position:fixed;right:12px;bottom:10px;z-index:1080;
+         background:rgba(33,37,41,.85);color:#fff;font-size:12px;line-height:1;
+         padding:5px 9px;border-radius:12px;font-family:system-ui,Arial,sans-serif;
+         pointer-events:none;user-select:none;box-shadow:0 1px 4px rgba(0,0,0,.25);">
+        v<?php echo defined('PANEL_VERSION') ? htmlspecialchars(PANEL_VERSION) : '?'; ?>
+    </div>
+
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     
@@ -49,6 +57,21 @@
             }, 5000);
         }
         
+        // Дропдауны внутри таблиц (.table-responsive) и карточек обрезаются из-за
+        // overflow:hidden у .card / overflow:auto у .table-responsive. Переводим их
+        // Popper на strategy:'fixed', чтобы меню рендерилось поверх и не обрезалось.
+        document.addEventListener('DOMContentLoaded', function () {
+            if (!window.bootstrap || !bootstrap.Dropdown) return;
+            document.querySelectorAll('.table-responsive [data-bs-toggle="dropdown"]').forEach(function (el) {
+                bootstrap.Dropdown.getOrCreateInstance(el, {
+                    popperConfig: function (defaultConfig) {
+                        defaultConfig.strategy = 'fixed';
+                        return defaultConfig;
+                    }
+                });
+            });
+        });
+
         // Показ серверных уведомлений из query-параметров (?notification= / ?error=)
         document.addEventListener('DOMContentLoaded', function () {
             try {

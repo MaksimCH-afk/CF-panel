@@ -72,3 +72,6 @@ clover.xml
 sessions/
 *.sess
 
+
+# Claude Code local files
+.claude/

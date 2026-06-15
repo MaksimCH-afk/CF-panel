@@ -46,7 +46,10 @@ $activePage = $currentPage;
     <meta name="facebookexternalhit" content="noindex">
     
     <title><?php echo isset($pageTitle) ? htmlspecialchars($pageTitle) . ' - ' : ''; ?>Cloudflare Panel</title>
-    
+
+    <!-- Favicon (синее облачко) -->
+    <link rel="icon" type="image/svg+xml" href="<?php echo BASE_PATH; ?>favicon.svg">
+
     <!-- Bootstrap 5 -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     
