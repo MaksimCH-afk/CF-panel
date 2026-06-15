@@ -268,9 +268,9 @@ function changeSSLMode($domain, $sslMode) {
         }
         
         logAction($pdo, $userId, "Mass SSL Mode Change Attempt", "Domain: {$domain['domain']}, SSL Mode: '$sslMode'");
-        
-        // Обновляем SSL режим через Cloudflare API
-        $result = cloudflareApiRequest(
+
+        // Обновляем SSL режим через Cloudflare API (Detailed — чтобы получить текст ошибки)
+        $result = cloudflareApiRequestDetailed(
             $pdo,
             $domain['email'],
             $domain['api_key'],
@@ -280,14 +280,14 @@ function changeSSLMode($domain, $sslMode) {
             $proxies,
             $userId
         );
-        
-        if ($result && isset($result->success) && $result->success) {
+
+        if (!empty($result['success'])) {
             // Обновляем в базе данных
             $stmt = $pdo->prepare("UPDATE cloudflare_accounts SET ssl_mode = ? WHERE id = ?");
             $stmt->execute([$sslMode, $domain['id']]);
-            
+
             logAction($pdo, $userId, "Mass SSL Mode Change Success", "Domain: {$domain['domain']}, New SSL Mode: $sslMode");
-            
+
             return [
                 'success' => true,
                 'message' => "SSL режим изменен на $sslMode",
@@ -296,11 +296,15 @@ function changeSSLMode($domain, $sslMode) {
             ];
         } else {
             $errorMsg = 'Не удалось изменить SSL режим через API';
-            if (isset($result->errors) && is_array($result->errors)) {
-                $errors = array_map(function($err) { return $err->message ?? 'Unknown error'; }, $result->errors);
+            if (!empty($result['api_errors'])) {
+                $errors = array_map(function($err) { return $err['message'] ?? 'Unknown error'; }, $result['api_errors']);
                 $errorMsg .= ': ' . implode(', ', $errors);
+            } elseif (!empty($result['curl_error'])) {
+                $errorMsg .= ': ' . $result['curl_error'];
+            } elseif (!empty($result['http_code'])) {
+                $errorMsg .= ' (HTTP ' . $result['http_code'] . ')';
             }
-            
+
             logAction($pdo, $userId, "Mass SSL Mode Change Failed", "Domain: {$domain['domain']}, Error: $errorMsg");
             return ['success' => false, 'error' => $errorMsg, 'domain_id' => $domain['id']];
         }

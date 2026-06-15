@@ -84,9 +84,125 @@ function checkProxy($pdo, $proxyString, $proxyId, $userId) {
 }
 
 /**
+ * Определяет тип аутентификации Cloudflare по формату ключа.
+ *
+ * Cloudflare использует два способа:
+ *  - Global API Key (legacy): 37 hex-символов, всегда вместе с email (X-Auth-Email + X-Auth-Key)
+ *  - API Token (Bearer): 40 символов [A-Za-z0-9_-], email не требуется
+ *
+ * Раньше определение шло по `strlen($apiKey) > 40`, из-за чего токены ровно в 40
+ * символов ошибочно уходили как legacy и все запросы отклонялись Cloudflare.
+ *
+ * @param string|null $email Email аккаунта (для Global API Key)
+ * @param string $apiKey Ключ или токен
+ * @param string|null $authType Явный тип ('global'|'token') или null для автоопределения
+ * @return string 'legacy' или 'bearer'
+ */
+function cfDetectAuthType($email, $apiKey, $authType = null) {
+    $key = trim((string)$apiKey);
+
+    // Явно заданный тип имеет приоритет
+    if ($authType === 'token' || $authType === 'bearer') {
+        return 'bearer';
+    }
+    if ($authType === 'global' || $authType === 'legacy') {
+        return 'legacy';
+    }
+
+    // Уже с префиксом Bearer
+    if (strncmp($key, 'Bearer ', 7) === 0) {
+        return 'bearer';
+    }
+
+    // Global API Key — единственный legacy-формат: ровно 37 hex-символов (+ email).
+    // Всё остальное (API Token любой длины/формата, в т.ч. с префиксом cfat_) считаем Bearer.
+    if (!empty($email) && preg_match('/^[0-9a-f]{37}$/i', $key)) {
+        return 'legacy';
+    }
+
+    return 'bearer';
+}
+
+/**
+ * Формирует заголовки аутентификации для запроса к Cloudflare API.
+ *
+ * @param string|null $email Email аккаунта
+ * @param string $apiKey Ключ или токен
+ * @param string|null $authType Явный тип ('global'|'token') или null для автоопределения
+ * @return array [список заголовков, строка метода для логов ('bearer'|'legacy')]
+ */
+function cfBuildAuthHeaders($email, $apiKey, $authType = null) {
+    $headers = ["Content-Type: application/json"];
+    $method = cfDetectAuthType($email, $apiKey, $authType);
+
+    if ($method === 'bearer') {
+        $token = strncmp(trim((string)$apiKey), 'Bearer ', 7) === 0 ? trim($apiKey) : "Bearer " . trim((string)$apiKey);
+        $headers[] = "Authorization: $token";
+    } else {
+        $headers[] = "X-Auth-Email: $email";
+        $headers[] = "X-Auth-Key: " . trim((string)$apiKey);
+    }
+
+    return [$headers, $method];
+}
+
+/**
+ * Получает ВСЕ зоны аккаунта Cloudflare с учётом пагинации.
+ *
+ * Cloudflare отдаёт максимум 50 зон на страницу. Старый код брал только первую
+ * страницу, из-за чего у аккаунтов с >50 доменами импортировалась лишь часть.
+ *
+ * @return array ['success' => bool, 'zones' => array, 'error' => string|null]
+ */
+function cfFetchAllZones($pdo, $email, $apiKey, $proxies = [], $userId = null, $authType = null) {
+    $zones = [];
+    $page = 1;
+    $perPage = 50;
+
+    do {
+        $resp = cloudflareApiRequestDetailed(
+            $pdo, $email, $apiKey,
+            "zones?page=$page&per_page=$perPage",
+            'GET', [], $proxies, $userId, $authType
+        );
+
+        if (!$resp['success']) {
+            $error = 'Ошибка API Cloudflare';
+            if (!empty($resp['api_errors'])) {
+                $error .= ': ' . implode(', ', array_map(fn($e) => $e['message'] ?? 'Unknown', $resp['api_errors']));
+            } elseif (!empty($resp['curl_error'])) {
+                $error .= ': ' . $resp['curl_error'];
+            } elseif (!empty($resp['http_code'])) {
+                $error .= ' (HTTP ' . $resp['http_code'] . ')';
+            }
+            // Если первая страница не удалась — возвращаем ошибку, иначе отдаём что есть
+            if ($page === 1) {
+                return ['success' => false, 'zones' => [], 'error' => $error];
+            }
+            break;
+        }
+
+        $batch = is_array($resp['data']) ? $resp['data'] : ($resp['data'] ? [$resp['data']] : []);
+        foreach ($batch as $zone) {
+            $zones[] = $zone;
+        }
+
+        // Если получили меньше полной страницы — это была последняя
+        if (count($batch) < $perPage) {
+            break;
+        }
+
+        $page++;
+        // Защита от бесконечного цикла
+    } while ($page <= 200);
+
+    return ['success' => true, 'zones' => $zones, 'error' => null];
+}
+
+/**
  * Улучшенная функция для API запросов к Cloudflare с детальным логированием ошибок
  * Поддерживает как legacy аутентификацию (Email + API Key), так и современные Bearer токены
- * 
+ *
  * @param PDO $pdo Соединение с базой данных
  * @param string|null $email Email для legacy аутентификации (или null для Bearer token)
  * @param string $apiKey API Key для legacy аутентификации или Bearer token
@@ -95,9 +211,10 @@ function checkProxy($pdo, $proxyString, $proxyId, $userId) {
  * @param array $data Данные для отправки
  * @param array $proxies Список прокси серверов
  * @param int|null $userId ID пользователя для логирования
+ * @param string|null $authType Явный тип аутентификации ('global'|'token') или null для автоопределения
  * @return array Детальный результат запроса
  */
-function cloudflareApiRequestDetailed($pdo, $email, $apiKey, $endpoint, $method = 'GET', $data = [], $proxies = [], $userId = null) {
+function cloudflareApiRequestDetailed($pdo, $email, $apiKey, $endpoint, $method = 'GET', $data = [], $proxies = [], $userId = null, $authType = null) {
     $result = [
         'success' => false,
         'data' => null,
@@ -112,21 +229,10 @@ function cloudflareApiRequestDetailed($pdo, $email, $apiKey, $endpoint, $method 
     $ch = curl_init("https://api.cloudflare.com/client/v4/$endpoint");
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
     
-    // Определяем метод аутентификации
-    $headers = ["Content-Type: application/json"];
-    
-    if ($email === null || empty($email) || strpos($apiKey, 'Bearer ') === 0 || strlen($apiKey) > 40) {
-        // Используем Bearer token (современный способ)
-        $token = strpos($apiKey, 'Bearer ') === 0 ? $apiKey : "Bearer $apiKey";
-        $headers[] = "Authorization: $token";
-        $result['auth_method'] = 'bearer';
-    } else {
-        // Используем legacy аутентификацию (Email + API Key)
-        $headers[] = "X-Auth-Email: $email";
-        $headers[] = "X-Auth-Key: $apiKey";
-        $result['auth_method'] = 'legacy';
-    }
-    
+    // Определяем метод аутентификации (надёжно, по формату ключа или явному типу)
+    list($headers, $authMethod) = cfBuildAuthHeaders($email, $apiKey, $authType);
+    $result['auth_method'] = $authMethod;
+
     curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     curl_setopt($ch, CURLOPT_TIMEOUT, 30);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
@@ -1053,15 +1159,12 @@ function createOriginCertificate($pdo, $domainId, $userId, $validity = 365) {
         logAction($pdo, $userId, "Sending Certificate Request to Cloudflare", 
             "Domain: {$domain['domain']}, Hostnames: " . implode(', ', $certData['hostnames']) . ", API Endpoint: certificates");
         
-        // Для Origin CA API нужен специальный запрос с прямой авторизацией
+        // Origin CA API: авторизация по типу аккаунта (Global API Key или Bearer-токен с SSL and Certificates: Edit)
         $endpointUrl = "https://api.cloudflare.com/client/v4/certificates";
+        list($originCaHeaders) = cfBuildAuthHeaders($domain['email'], $domain['api_key'], $domain['auth_type'] ?? null);
         $ch = curl_init($endpointUrl);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            "X-Auth-Email: {$domain['email']}",
-            "X-Auth-Key: {$domain['api_key']}",
-            "Content-Type: application/json"
-        ]);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $originCaHeaders);
         curl_setopt($ch, CURLOPT_TIMEOUT, 30);
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
         curl_setopt($ch, CURLOPT_POST, 1);
@@ -2969,12 +3072,13 @@ function cloudflareUploadWorkerScript($pdo, $credentials, $zoneId, $scriptConten
     curl_setopt($ch, CURLOPT_TIMEOUT, 60);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
 
-    $headers = [
-        "X-Auth-Email: {$credentials['email']}",
-        "X-Auth-Key: {$credentials['api_key']}",
-        "Content-Type: application/javascript"
-    ];
-    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    // Авторизация по типу аккаунта (Global API Key или Bearer-токен с Workers Scripts: Edit)
+    list($authHeaders) = cfBuildAuthHeaders($credentials['email'], $credentials['api_key'], $credentials['auth_type'] ?? null);
+    $headers = array_filter($authHeaders, function($h) {
+        return stripos($h, 'Content-Type:') !== 0; // заменим Content-Type на javascript
+    });
+    $headers[] = "Content-Type: application/javascript";
+    curl_setopt($ch, CURLOPT_HTTPHEADER, array_values($headers));
 
     if (!empty($proxies)) {
         $proxy = getRandomProxy($proxies);
@@ -3281,9 +3385,9 @@ function exportCloudflareTokensCsv($pdo, $userId, $accountId = null) {
 }
 
 // Обратная совместимость: старая функция cloudflareApiRequest
-function cloudflareApiRequest($pdo, $email, $apiKey, $endpoint, $method = 'GET', $data = [], $proxies = [], $userId = null) {
-    $detailedResult = cloudflareApiRequestDetailed($pdo, $email, $apiKey, $endpoint, $method, $data, $proxies, $userId);
-    
+function cloudflareApiRequest($pdo, $email, $apiKey, $endpoint, $method = 'GET', $data = [], $proxies = [], $userId = null, $authType = null) {
+    $detailedResult = cloudflareApiRequestDetailed($pdo, $email, $apiKey, $endpoint, $method, $data, $proxies, $userId, $authType);
+
     if ($detailedResult['success']) {
         // Возвращаем объект в старом формате для совместимости
         return (object) [
@@ -3291,6 +3395,7 @@ function cloudflareApiRequest($pdo, $email, $apiKey, $endpoint, $method = 'GET',
             'result' => $detailedResult['data']
         ];
     } else {
+        // Сохраняем контракт: на ошибке возвращаем false (многие вызовы проверяют !$result)
         return false;
     }
 }

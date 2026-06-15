@@ -297,6 +297,13 @@ try {
         // Колонка уже существует
     }
 
+    // Явный тип аутентификации аккаунта: 'global' (Global API Key) или 'token' (API Token)
+    try {
+        $pdo->exec("ALTER TABLE cloudflare_credentials ADD COLUMN auth_type TEXT DEFAULT 'global'");
+    } catch (Exception $e) {
+        // Колонка уже существует
+    }
+
     try {
         $pdo->exec("UPDATE cloudflare_accounts SET updated_at = COALESCE(updated_at, created_at)");
     } catch (Exception $e) {

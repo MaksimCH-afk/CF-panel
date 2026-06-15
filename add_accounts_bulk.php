@@ -21,9 +21,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     try {
+        $authType = cfDetectAuthType($email, $apiKey) === 'bearer' ? 'token' : 'global';
+
+        // Сначала получаем ВСЕ зоны (с пагинацией) — это также проверяет валидность ключа
+        $zonesResult = cfFetchAllZones($pdo, $email, $apiKey, $proxies, $userId, $authType);
+        if (!$zonesResult['success'] || empty($zonesResult['zones'])) {
+            echo json_encode(['status' => 'error', 'message' => $zonesResult['error'] ?? 'Не удалось получить список зон Cloudflare']);
+            exit;
+        }
+
         // Пытаемся добавить новый аккаунт
-        $stmt = $pdo->prepare("INSERT OR IGNORE INTO cloudflare_credentials (user_id, email, api_key) VALUES (?, ?, ?)");
-        $stmt->execute([$userId, $email, $apiKey]);
+        $stmt = $pdo->prepare("INSERT OR IGNORE INTO cloudflare_credentials (user_id, email, api_key, auth_type) VALUES (?, ?, ?, ?)");
+        $stmt->execute([$userId, $email, $apiKey, $authType]);
 
         $accountId = (int)$pdo->lastInsertId();
         if ($accountId === 0) {
@@ -36,18 +45,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        $zonesResponse = cloudflareApiRequest($pdo, $email, $apiKey, "zones", 'GET', [], $proxies, $userId);
-        if (!$zonesResponse || empty($zonesResponse->result)) {
-            echo json_encode(['status' => 'error', 'message' => 'Не удалось получить список зон Cloudflare']);
-            exit;
-        }
-
         $domainStmt = $pdo->prepare("INSERT OR IGNORE INTO cloudflare_accounts (user_id, account_id, group_id, domain, server_ip, ns_records, zone_id) VALUES (?, ?, ?, ?, ?, ?, ?)");
         $queueStmt = $pdo->prepare("INSERT INTO queue (user_id, domain_id, type, data, status) VALUES (?, ?, ?, ?, ?)");
         $addedDomains = 0;
         $skippedDomains = 0;
 
-        foreach ($zonesResponse->result as $zone) {
+        foreach ($zonesResult['zones'] as $zone) {
             $nsRecords = isset($zone->name_servers) ? json_encode($zone->name_servers) : null;
             $domainStmt->execute([
                 $userId,

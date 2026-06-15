@@ -49,6 +49,24 @@
             }, 5000);
         }
         
+        // Показ серверных уведомлений из query-параметров (?notification= / ?error=)
+        document.addEventListener('DOMContentLoaded', function () {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const note = params.get('notification');
+                const err = params.get('error');
+                if (note) showToast(note, 'success');
+                if (err) showToast(err, 'error');
+                if (note || err) {
+                    params.delete('notification');
+                    params.delete('error');
+                    const qs = params.toString();
+                    const newUrl = window.location.pathname + (qs ? '?' + qs : '') + window.location.hash;
+                    window.history.replaceState({}, document.title, newUrl);
+                }
+            } catch (e) { /* no-op */ }
+        });
+
         // Copy to clipboard utility
         function copyToClipboard(text, successMessage = 'Скопировано!') {
             navigator.clipboard.writeText(text).then(() => {

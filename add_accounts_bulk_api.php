@@ -96,64 +96,59 @@ function addSingleAccount() {
         
         // Проверяем валидность API ключа через запрос к Cloudflare
         $proxies = getProxies($pdo, $_SESSION['user_id']);
-        
-        // Получаем зоны - это также проверит валидность ключа
-        $zones = cloudflareApiRequestDetailed($pdo, $email, $apiKey, "zones?per_page=50", 'GET', [], $proxies, $_SESSION['user_id']);
-        
-        if (!$zones['success']) {
-            $errorMsg = 'Ошибка API Cloudflare';
-            if (!empty($zones['api_errors'])) {
-                $errorMsg .= ': ' . implode(', ', array_map(function($e) { 
-                    return $e['message'] ?? 'Unknown'; 
-                }, $zones['api_errors']));
-            } elseif (!empty($zones['curl_error'])) {
-                $errorMsg .= ': ' . $zones['curl_error'];
-            }
-            
+
+        // Определяем тип авторизации по формату ключа
+        $authType = cfDetectAuthType($email, $apiKey) === 'bearer' ? 'token' : 'global';
+
+        // Получаем ВСЕ зоны (с пагинацией) — это также проверит валидность ключа
+        $zonesResult = cfFetchAllZones($pdo, $email, $apiKey, $proxies, $_SESSION['user_id'], $authType);
+
+        if (!$zonesResult['success']) {
             echo json_encode([
-                'success' => false, 
-                'error' => $errorMsg,
+                'success' => false,
+                'error' => $zonesResult['error'] ?? 'Ошибка API Cloudflare',
                 'email' => $email
             ]);
             return;
         }
-        
+
         // Добавляем аккаунт в базу
-        $stmt = $pdo->prepare("INSERT INTO cloudflare_credentials (user_id, email, api_key) VALUES (?, ?, ?)");
-        $stmt->execute([$_SESSION['user_id'], $email, $apiKey]);
+        $stmt = $pdo->prepare("INSERT INTO cloudflare_credentials (user_id, email, api_key, auth_type) VALUES (?, ?, ?, ?)");
+        $stmt->execute([$_SESSION['user_id'], $email, $apiKey, $authType]);
         $accountId = $pdo->lastInsertId();
-        
+
         if (!$accountId) {
             echo json_encode([
-                'success' => false, 
+                'success' => false,
                 'error' => 'Не удалось добавить аккаунт в базу',
                 'email' => $email
             ]);
             return;
         }
-        
+
         // Добавляем домены из Cloudflare
         $domainsAdded = 0;
-        
-        if (!empty($zones['data'])) {
+
+        if (!empty($zonesResult['zones'])) {
             $domainStmt = $pdo->prepare("
-                INSERT OR IGNORE INTO cloudflare_accounts 
-                (user_id, account_id, group_id, domain, server_ip, ssl_mode, zone_id) 
+                INSERT OR IGNORE INTO cloudflare_accounts
+                (user_id, account_id, group_id, domain, server_ip, ssl_mode, zone_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ");
-            
-            foreach ($zones['data'] as $zone) {
+
+            foreach ($zonesResult['zones'] as $zone) {
                 try {
+                    // ssl_mode = NULL — реальный режим подтянет синхронизация
                     $domainStmt->execute([
-                        $_SESSION['user_id'], 
-                        $accountId, 
-                        $groupId, 
-                        $zone->name, 
-                        '0.0.0.0', 
-                        'flexible', 
+                        $_SESSION['user_id'],
+                        $accountId,
+                        $groupId,
+                        $zone->name,
+                        '0.0.0.0',
+                        null,
                         $zone->id
                     ]);
-                    
+
                     if ($domainStmt->rowCount() > 0) {
                         $domainsAdded++;
                     }

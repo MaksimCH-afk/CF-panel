@@ -206,17 +206,97 @@
                         </select>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Email</label>
-                        <input type="email" name="email" class="form-control" placeholder="user@example.com" required>
+                        <label class="form-label">Тип авторизации</label>
+                        <select name="auth_type" class="form-select" id="addAccountAuthType">
+                            <option value="global" selected>Global API Key (email + ключ)</option>
+                            <option value="token">API Token (Bearer)</option>
+                        </select>
+                        <small class="text-muted">Global API Key рекомендуется для большого числа сайтов.</small>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">API Key</label>
-                        <input type="text" name="api_key" class="form-control" placeholder="Cloudflare Global API Key" required>
+                        <label class="form-label">Email</label>
+                        <input type="email" name="email" class="form-control" placeholder="user@example.com">
+                        <small class="text-muted">Обязателен для Global API Key. Для API Token можно оставить пустым.</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">API Key / Token</label>
+                        <input type="text" name="api_key" class="form-control" placeholder="Cloudflare Global API Key или API Token" required>
                     </div>
                     <button type="submit" name="add_account" class="btn btn-primary w-100">
                         <i class="fas fa-plus me-1"></i>Добавить аккаунт
                     </button>
                 </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Manage Accounts Modal -->
+<div class="modal fade" id="manageAccountsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-user-cog me-2"></i>Управление аккаунтами</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <?php
+                $accountsList = [];
+                if (isset($pdo, $_SESSION['user_id'])) {
+                    $accStmt = $pdo->prepare("
+                        SELECT cc.id, cc.email, cc.auth_type,
+                               (SELECT COUNT(*) FROM cloudflare_accounts ca WHERE ca.account_id = cc.id) AS domains_count
+                        FROM cloudflare_credentials cc
+                        WHERE cc.user_id = ?
+                        ORDER BY cc.email ASC
+                    ");
+                    $accStmt->execute([$_SESSION['user_id']]);
+                    $accountsList = $accStmt->fetchAll();
+                }
+                ?>
+                <?php if (empty($accountsList)): ?>
+                    <div class="alert alert-info mb-0">Аккаунтов пока нет.</div>
+                <?php else: ?>
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Email / метка</th>
+                                    <th>Тип авторизации</th>
+                                    <th class="text-center">Доменов</th>
+                                    <th class="text-end">Действие</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($accountsList as $acc): ?>
+                                    <tr>
+                                        <td><?php echo htmlspecialchars($acc['email']); ?></td>
+                                        <td>
+                                            <?php if (($acc['auth_type'] ?? 'global') === 'token'): ?>
+                                                <span class="badge bg-info">API Token</span>
+                                            <?php else: ?>
+                                                <span class="badge bg-secondary">Global API Key</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td class="text-center"><?php echo (int)$acc['domains_count']; ?></td>
+                                        <td class="text-end">
+                                            <form method="POST" action="handle_forms.php" class="d-inline"
+                                                  onsubmit="return confirm('Удалить аккаунт <?php echo htmlspecialchars(addslashes($acc['email'])); ?> и все его домены (<?php echo (int)$acc['domains_count']; ?>)? Это действие необратимо.');">
+                                                <input type="hidden" name="account_id" value="<?php echo (int)$acc['id']; ?>">
+                                                <button type="submit" name="delete_account" class="btn btn-sm btn-outline-danger">
+                                                    <i class="fas fa-trash me-1"></i>Удалить
+                                                </button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="alert alert-warning mt-2 mb-0">
+                        <small><i class="fas fa-exclamation-triangle me-1"></i>Удаление аккаунта удаляет из панели все его домены и связанные записи (очередь, правила). На самом Cloudflare ничего не удаляется.</small>
+                    </div>
+                <?php endif; ?>
             </div>
         </div>
     </div>

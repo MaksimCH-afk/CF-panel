@@ -47,11 +47,16 @@ class CloudflareApiClient {
         $this->proxies = $proxies;
         $this->userId = $userId;
         
-        // Автоматически определяем тип аутентификации
-        if ($email === null || empty($email) || strpos($apiKey, 'Bearer ') === 0 || strlen($apiKey) > 40) {
+        // Автоматически определяем тип аутентификации.
+        // Global API Key = 37 hex-символов (+ email), API Token = 40 символов [A-Za-z0-9_-].
+        $key = trim((string)$apiKey);
+        if (strncmp($key, 'Bearer ', 7) === 0) {
             $this->authType = 'bearer';
-        } else {
+        } elseif (!empty($email) && preg_match('/^[0-9a-f]{37}$/i', $key)) {
             $this->authType = 'legacy';
+        } else {
+            // API Token любого формата (в т.ч. cfat_…) → Bearer
+            $this->authType = 'bearer';
         }
     }
     

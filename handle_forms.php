@@ -432,28 +432,92 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     // Добавление одного аккаунта
     if (isset($_POST['add_account'])) {
-        $stmt = $pdo->prepare("INSERT OR IGNORE INTO cloudflare_credentials (user_id, email, api_key) VALUES (?, ?, ?)");
-        $stmt->execute([$_SESSION['user_id'], $_POST['email'], $_POST['api_key']]);
+        $authType = ($_POST['auth_type'] ?? 'global') === 'token' ? 'token' : 'global';
+        $email = trim($_POST['email'] ?? '');
+        $apiKey = trim($_POST['api_key'] ?? '');
+        $groupId = !empty($_POST['group_id']) ? (int)$_POST['group_id'] : null;
+
+        // Для Global API Key email обязателен; для токена — генерируем метку, если пусто
+        if ($authType === 'global' && empty($email)) {
+            header('Location: ' . BASE_PATH . 'dashboard.php?error=' . urlencode('Для Global API Key укажите email'));
+            exit;
+        }
+        if (empty($email)) {
+            $email = 'token-' . substr(preg_replace('/[^A-Za-z0-9]/', '', $apiKey), -8);
+        }
+
+        // Проверяем ключ и сразу получаем все зоны (с пагинацией)
+        $proxies = getProxies($pdo, $_SESSION['user_id']);
+        $zonesResult = cfFetchAllZones($pdo, $email, $apiKey, $proxies, $_SESSION['user_id'], $authType);
+
+        if (!$zonesResult['success']) {
+            logAction($pdo, $_SESSION['user_id'], "Account Add Failed", "Email: $email, Error: {$zonesResult['error']}");
+            header('Location: ' . BASE_PATH . 'dashboard.php?error=' . urlencode('Не удалось добавить аккаунт: ' . $zonesResult['error']));
+            exit;
+        }
+
+        $stmt = $pdo->prepare("INSERT OR IGNORE INTO cloudflare_credentials (user_id, email, api_key, auth_type) VALUES (?, ?, ?, ?)");
+        $stmt->execute([$_SESSION['user_id'], $email, $apiKey, $authType]);
         $accountId = $pdo->lastInsertId();
-        
+
         if ($accountId) {
-            $groupId = !empty($_POST['group_id']) ? (int)$_POST['group_id'] : null;
-            $proxies = getProxies($pdo, $_SESSION['user_id']);
-            $zones = cloudflareApiRequestDetailed($pdo, $_POST['email'], $_POST['api_key'], "zones", 'GET', [], $proxies, $_SESSION['user_id']);
-            
-            if ($zones['success'] && !empty($zones['data'])) {
-                $domainStmt = $pdo->prepare("INSERT OR IGNORE INTO cloudflare_accounts (user_id, account_id, group_id, domain, server_ip, ssl_mode, zone_id) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                
-                foreach ($zones['data'] as $zone) {
-                    $domainStmt->execute([$_SESSION['user_id'], $accountId, $groupId, $zone->name, '0.0.0.0', 'flexible', $zone->id]);
-                    logAction($pdo, $_SESSION['user_id'], "Domain Added (Account)", "Domain: {$zone->name}, Zone ID: {$zone->id}");
-                }
+            $domainStmt = $pdo->prepare("INSERT OR IGNORE INTO cloudflare_accounts (user_id, account_id, group_id, domain, server_ip, ssl_mode, zone_id) VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $added = 0;
+            foreach ($zonesResult['zones'] as $zone) {
+                // ssl_mode оставляем NULL — реальный режим подтянет синхронизация
+                $domainStmt->execute([$_SESSION['user_id'], $accountId, $groupId, $zone->name, '0.0.0.0', null, $zone->id]);
+                $added++;
             }
-            
-            logAction($pdo, $_SESSION['user_id'], "Account Added", "Email: {$_POST['email']}");
-            header('Location: ' . BASE_PATH . 'dashboard.php?notification=Аккаунт добавлен');
+            logAction($pdo, $_SESSION['user_id'], "Account Added", "Email: $email, Auth: $authType, Domains: $added");
+            header('Location: ' . BASE_PATH . 'dashboard.php?notification=' . urlencode("Аккаунт добавлен, импортировано доменов: $added"));
         } else {
             header('Location: ' . BASE_PATH . 'dashboard.php?notification=Аккаунт уже существует');
+        }
+        exit;
+    }
+
+    // Удаление аккаунта Cloudflare (вместе со всеми его доменами и связанными данными)
+    if (isset($_POST['delete_account'])) {
+        $accountId = (int)($_POST['account_id'] ?? 0);
+        if ($accountId) {
+            // Проверяем, что аккаунт принадлежит пользователю
+            $chk = $pdo->prepare("SELECT email FROM cloudflare_credentials WHERE id = ? AND user_id = ?");
+            $chk->execute([$accountId, $_SESSION['user_id']]);
+            $acc = $chk->fetch();
+
+            if ($acc) {
+                // Собираем id доменов аккаунта для каскадной чистки зависимых таблиц
+                $domStmt = $pdo->prepare("SELECT id FROM cloudflare_accounts WHERE account_id = ? AND user_id = ?");
+                $domStmt->execute([$accountId, $_SESSION['user_id']]);
+                $domainIds = $domStmt->fetchAll(PDO::FETCH_COLUMN);
+
+                $pdo->beginTransaction();
+                try {
+                    if (!empty($domainIds)) {
+                        $in = implode(',', array_fill(0, count($domainIds), '?'));
+                        foreach (['queue', 'security_rules', 'cloudflare_firewall_rules', 'cloudflare_worker_routes'] as $tbl) {
+                            try {
+                                $pdo->prepare("DELETE FROM $tbl WHERE domain_id IN ($in)")->execute($domainIds);
+                            } catch (Exception $e) { /* таблица может отсутствовать */ }
+                        }
+                    }
+                    $pdo->prepare("DELETE FROM cloudflare_accounts WHERE account_id = ? AND user_id = ?")
+                        ->execute([$accountId, $_SESSION['user_id']]);
+                    $pdo->prepare("DELETE FROM cloudflare_credentials WHERE id = ? AND user_id = ?")
+                        ->execute([$accountId, $_SESSION['user_id']]);
+                    $pdo->commit();
+                    logAction($pdo, $_SESSION['user_id'], "Account Deleted", "Email: {$acc['email']}, Domains removed: " . count($domainIds));
+                    header('Location: ' . BASE_PATH . 'dashboard.php?notification=' . urlencode('Аккаунт удалён, доменов удалено: ' . count($domainIds)));
+                } catch (Exception $e) {
+                    $pdo->rollBack();
+                    logAction($pdo, $_SESSION['user_id'], "Account Delete Failed", "Email: {$acc['email']}, Error: " . $e->getMessage());
+                    header('Location: ' . BASE_PATH . 'dashboard.php?error=' . urlencode('Ошибка удаления аккаунта'));
+                }
+            } else {
+                header('Location: ' . BASE_PATH . 'dashboard.php?error=' . urlencode('Аккаунт не найден'));
+            }
+        } else {
+            header('Location: ' . BASE_PATH . 'dashboard.php?error=' . urlencode('Не указан аккаунт'));
         }
         exit;
     }
@@ -507,27 +571,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         continue;
                     }
                     
+                    // Определяем тип авторизации и получаем все зоны (с пагинацией)
+                    $proxies = getProxies($pdo, $_SESSION['user_id']);
+                    $authType = cfDetectAuthType($email, $apiKey) === 'bearer' ? 'token' : 'global';
+                    $zonesResult = cfFetchAllZones($pdo, $email, $apiKey, $proxies, $_SESSION['user_id'], $authType);
+
+                    if (!$zonesResult['success']) {
+                        $errorCount++;
+                        $errors[] = "Ошибка при добавлении $email: " . $zonesResult['error'];
+                        continue;
+                    }
+
                     // Добавляем аккаунт
-                    $stmt = $pdo->prepare("INSERT INTO cloudflare_credentials (user_id, email, api_key) VALUES (?, ?, ?)");
-                    $stmt->execute([$_SESSION['user_id'], $email, $apiKey]);
+                    $stmt = $pdo->prepare("INSERT INTO cloudflare_credentials (user_id, email, api_key, auth_type) VALUES (?, ?, ?, ?)");
+                    $stmt->execute([$_SESSION['user_id'], $email, $apiKey, $authType]);
                     $accountId = $pdo->lastInsertId();
-                    
+
                     if ($accountId) {
-                        // Получаем зоны из Cloudflare
-                        $proxies = getProxies($pdo, $_SESSION['user_id']);
-                        $zones = cloudflareApiRequestDetailed($pdo, $email, $apiKey, "zones", 'GET', [], $proxies, $_SESSION['user_id']);
-                        
-                        if ($zones['success'] && !empty($zones['data'])) {
+                        if (!empty($zonesResult['zones'])) {
                             $domainStmt = $pdo->prepare("INSERT OR IGNORE INTO cloudflare_accounts (user_id, account_id, group_id, domain, server_ip, ssl_mode, zone_id) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                            
-                            foreach ($zones['data'] as $zone) {
-                                $domainStmt->execute([$_SESSION['user_id'], $accountId, $groupId, $zone->name, '0.0.0.0', 'flexible', $zone->id]);
-                                logAction($pdo, $_SESSION['user_id'], "Domain Added (Bulk Account)", "Domain: {$zone->name}, Email: $email");
+
+                            foreach ($zonesResult['zones'] as $zone) {
+                                // ssl_mode = NULL — реальный режим подтянет синхронизация
+                                $domainStmt->execute([$_SESSION['user_id'], $accountId, $groupId, $zone->name, '0.0.0.0', null, $zone->id]);
                             }
                         }
-                        
+
                         $successCount++;
-                        logAction($pdo, $_SESSION['user_id'], "Account Added (Bulk)", "Email: $email");
+                        logAction($pdo, $_SESSION['user_id'], "Account Added (Bulk)", "Email: $email, Auth: $authType, Domains: " . count($zonesResult['zones']));
                     }
                     
                 } catch (Exception $e) {

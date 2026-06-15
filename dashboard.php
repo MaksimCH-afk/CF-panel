@@ -128,7 +128,11 @@ function getSSLModeInfo($mode) {
     ];
     // Нормализуем значение (lowercase, trim)
     $normalizedMode = strtolower(trim($mode ?? ''));
-    return $modes[$normalizedMode] ?? ['name' => ucfirst($normalizedMode ?: 'Unknown'), 'class' => 'secondary'];
+    // Пустое значение = режим ещё не синхронизирован с Cloudflare
+    if ($normalizedMode === '' || $normalizedMode === 'unknown') {
+        return ['name' => '— (синхр.)', 'class' => 'secondary'];
+    }
+    return $modes[$normalizedMode] ?? ['name' => ucfirst($normalizedMode), 'class' => 'secondary'];
 }
 
 function getDomainStatusInfo($status, $httpCode = null) {
@@ -205,6 +209,12 @@ function getDomainStatusInfo($status, $httpCode = null) {
                     <li>
                         <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#addAccountQueueModal">
                             <i class="fas fa-tasks me-2 text-info"></i>Через очередь
+                        </a>
+                    </li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li>
+                        <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#manageAccountsModal">
+                            <i class="fas fa-user-cog me-2 text-secondary"></i>Управление аккаунтами
                         </a>
                     </li>
                 </ul>
@@ -338,7 +348,7 @@ function getDomainStatusInfo($status, $httpCode = null) {
                             <?php
                                 $httpCode = $domain['http_code'] ?? null;
                                 $statusInfo = getDomainStatusInfo($domain['domain_status'] ?? null, $httpCode);
-                                $sslInfo = getSSLModeInfo($domain['ssl_mode'] ?? 'flexible');
+                                $sslInfo = getSSLModeInfo($domain['ssl_mode'] ?? '');
                             ?>
                             <tr>
                                 <td class="text-center">
