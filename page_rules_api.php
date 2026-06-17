@@ -44,10 +44,26 @@ try {
                     'target' => 'url',
                     'constraint' => [
                         'operator' => 'matches',
-                        'value' => "*{$domain['domain']}/*"
+                        'value' => "*{$domain['domain']}/*.{jpg,jpeg,png,gif,webp,svg,css,js,woff,woff2,ico}"
                     ]
                 ]],
                 'actions' => [[ 'id' => 'cache_level', 'value' => 'cache_everything' ]],
+                'priority' => 1,
+                'status' => 'active'
+            ];
+            break;
+        case 'cache_everything':
+            $rule = [
+                'targets' => [[ 'target' => 'url', 'constraint' => ['operator' => 'matches', 'value' => "*{$domain['domain']}/*"] ]],
+                'actions' => [[ 'id' => 'cache_level', 'value' => 'cache_everything' ]],
+                'priority' => 1,
+                'status' => 'active'
+            ];
+            break;
+        case 'browser_cache':
+            $rule = [
+                'targets' => [[ 'target' => 'url', 'constraint' => ['operator' => 'matches', 'value' => "*{$domain['domain']}/*"] ]],
+                'actions' => [[ 'id' => 'browser_cache_ttl', 'value' => 2678400 ]],
                 'priority' => 1,
                 'status' => 'active'
             ];
@@ -63,6 +79,62 @@ try {
                 'status' => 'active'
             ];
             break;
+
+        // ПРЕСЕТ 1: 301-редирект (постранично или весь сайт на другой сайт)
+        case 'redirect_301':
+            $target = trim($_POST['target'] ?? '');           // куда редиректим (полный URL)
+            $source = trim($_POST['source'] ?? '');           // исходный путь (пусто = весь сайт)
+            $whole  = empty($source) || $source === '/' || $source === '/*';
+            if ($target === '') throw new Exception('Укажите целевой URL (target)');
+
+            if ($whole) {
+                // Весь сайт на главную другого сайта
+                $sourceMatch = "*{$domain['domain']}/*";
+                $targetUrl = rtrim($target, '/') . '/';
+            } else {
+                // Конкретная страница -> конкретный URL
+                $src = '/' . ltrim($source, '/');
+                $sourceMatch = "*{$domain['domain']}{$src}";
+                $targetUrl = $target;
+            }
+            $rule = [
+                'targets' => [[ 'target' => 'url', 'constraint' => ['operator' => 'matches', 'value' => $sourceMatch] ]],
+                'actions' => [[ 'id' => 'forwarding_url', 'value' => ['url' => $targetUrl, 'status_code' => 301] ]],
+                'priority' => 1,
+                'status' => 'active'
+            ];
+            break;
+
+        // ПРЕСЕТ 2: отдавать 404/410 для страницы или всего сайта (через WAF custom rule)
+        case 'gone_410':
+        case 'not_found_404':
+            $code = $ruleType === 'not_found_404' ? 404 : (int)($_POST['code'] ?? 410);
+            if (!in_array($code, [404, 410], true)) $code = 410;
+            $path = trim($_POST['path'] ?? '');
+            if ($path === '' || $path === '/*') {
+                $expr = '(starts_with(http.request.uri.path, "/"))';
+                $scopeDesc = 'весь сайт';
+            } else {
+                $p = '/' . ltrim($path, '/');
+                $expr = '(http.request.uri.path eq "' . addslashes($p) . '")';
+                $scopeDesc = $p;
+            }
+            $res = cfAddCustomRule($pdo, $domain['email'], $domain['api_key'], $zoneId, [
+                'action' => 'block',
+                'expression' => $expr,
+                'description' => "Return $code ($scopeDesc) - CloudPanel",
+                'action_parameters' => [
+                    'response' => [
+                        'status_code' => $code,
+                        'content' => $code === 410 ? 'Gone' : 'Not Found',
+                        'content_type' => 'text/plain',
+                    ],
+                ],
+            ], $proxies, $_SESSION['user_id']);
+            if (!$res['success']) throw new Exception('Не удалось применить правило: ' . $res['error']);
+            echo json_encode(['success' => true, 'message' => "Правило $code применено ($scopeDesc)"]);
+            exit;
+
         default:
             throw new Exception('Неизвестный тип правила');
     }
@@ -70,7 +142,7 @@ try {
     $resp = cloudflareApiRequestDetailed($pdo, $domain['email'], $domain['api_key'], "zones/$zoneId/pagerules", 'POST', $rule, $proxies, $_SESSION['user_id']);
 
     if (!$resp || !$resp['success']) {
-        throw new Exception('Не удалось применить правило');
+        throw new Exception('Не удалось применить правило: ' . ($resp ? cfReadableError($resp) : 'нет ответа'));
     }
 
     echo json_encode(['success' => true, 'message' => 'Правило применено']);

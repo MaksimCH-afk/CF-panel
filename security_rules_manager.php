@@ -331,6 +331,15 @@ $stats = $statsStmt->fetch();
                                             <strong>Blacklist:</strong> запретить из этих стран<br>
                                             <strong>Оба:</strong> создать 2 отдельных правила
                                         </small>
+                                        <div class="form-check mt-2">
+                                            <input class="form-check-input" type="checkbox" id="geoAllowBots" checked>
+                                            <label class="form-check-label small" for="geoAllowBots">
+                                                Не блокировать поисковые системы (Google/Yandex/Bing)
+                                            </label>
+                                        </div>
+                                        <div class="alert alert-warning small mt-2 mb-0">
+                                            <i class="fas fa-triangle-exclamation me-1"></i><strong>Как это работает:</strong> блокировка идёт по стране IP-адреса посетителя (<code>ip.geoip.country</code>). При «разрешить только страну X» посетители из других стран получают блок. <strong>Поисковики краулят из других стран</strong> — без галочки выше вы заблокируете и их (сайт выпадет из выдачи). Галочка добавляет исключение <code>not cf.client.bot</code> (проверенные Cloudflare боты проходят).
+                                        </div>
                                     </div>
                                     
                                     <div class="mb-3">
@@ -483,6 +492,14 @@ $stats = $statsStmt->fetch();
                                 <button class="list-group-item list-group-item-action" onclick="loadWorkerTemplateWithConfig('referrer-only')">
                                     <h6 class="mb-1"><i class="fas fa-search me-2 text-success"></i>Referrer Only</h6>
                                     <small class="text-muted">Только поисковики</small>
+                                </button>
+                                <button class="list-group-item list-group-item-action" onclick="loadWorkerTemplateWithConfig('gone-410')">
+                                    <h6 class="mb-1"><i class="fas fa-ban me-2 text-danger"></i>Gone 410</h6>
+                                    <small class="text-muted">Отдавать 410 (страница/сайт)</small>
+                                </button>
+                                <button class="list-group-item list-group-item-action" onclick="loadWorkerTemplateWithConfig('not-found-404')">
+                                    <h6 class="mb-1"><i class="fas fa-question-circle me-2 text-secondary"></i>Not Found 404</h6>
+                                    <small class="text-muted">Отдавать 404 (страница/сайт)</small>
                                 </button>
                             </div>
                             

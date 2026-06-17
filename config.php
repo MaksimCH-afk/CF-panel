@@ -5,6 +5,7 @@ session_start();
 $_isApiEndpoint = (
     isset($_SERVER['REQUEST_URI']) &&
     (strpos($_SERVER['REQUEST_URI'], '_api.php') !== false ||
+     strpos($_SERVER['REQUEST_URI'], 'security_rules_api_minimal.php') !== false ||
      strpos($_SERVER['REQUEST_URI'], 'queue_processor.php') !== false)
 );
 
@@ -22,8 +23,8 @@ define('BASE_PATH', $basePath);
 define('ROOT_PATH', dirname(__FILE__) . '/');
 define('DB_PATH', ROOT_PATH . 'cloudflare_panel.db');
 
-// Версия панели (счётчик). Текущая — 3.0, следующие правки: 4.0, 5.0, ...
-define('PANEL_VERSION', '3.0');
+// Версия панели (счётчик). Текущая — 5.0, следующие правки: 6.0, 7.0, ...
+define('PANEL_VERSION', '5.0');
 
 // Перенаправление на HTTPS, если соединение не защищено (исключая localhost, CLI и API файлы)
 if (php_sapi_name() !== 'cli') {
@@ -66,6 +67,11 @@ try {
     $pdo = new PDO("sqlite:" . DB_PATH);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+
+    // Конкурентный доступ (фоновый обработчик очереди + веб-запросы):
+    // WAL разрешает одновременные чтение/запись, busy_timeout ждёт вместо "database is locked".
+    $pdo->exec('PRAGMA busy_timeout = 20000');
+    $pdo->exec('PRAGMA journal_mode = WAL');
 
     // Создание таблиц, если они еще не существуют
     $pdo->exec("
@@ -289,6 +295,10 @@ try {
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_user_id ON cloudflare_accounts(user_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_domain_status ON cloudflare_accounts(domain_status)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_last_check ON cloudflare_accounts(last_check)");
+    // Под масштаб (≈1000 аккаунтов / 1500 доменов): ускоряют JOIN по аккаунту и фильтр по IP
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_account_id ON cloudflare_accounts(account_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_dns_ip ON cloudflare_accounts(dns_ip)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_queue_status ON queue(status)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tokens_user ON cloudflare_api_tokens(user_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_firewall_rules_domain ON cloudflare_firewall_rules(domain_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_pages_projects_account ON cloudflare_pages_projects(account_id)");
@@ -361,6 +371,7 @@ try {
 $isApiRequest = (
     isset($_SERVER['REQUEST_URI']) &&
     (strpos($_SERVER['REQUEST_URI'], '_api.php') !== false ||
+     strpos($_SERVER['REQUEST_URI'], 'security_rules_api_minimal.php') !== false ||
      strpos($_SERVER['REQUEST_URI'], 'get_debug_logs.php') !== false ||
      strpos($_SERVER['REQUEST_URI'], 'queue_processor.php') !== false ||
      strpos($_SERVER['REQUEST_URI'], '.json') !== false ||

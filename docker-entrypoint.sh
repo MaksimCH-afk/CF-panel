@@ -22,7 +22,7 @@ fi
     curl -s -A "QueueProcessor" \
       "http://127.0.0.1/queue_processor.php?auth_token=cloudflare_queue_processor_2024" \
       >/dev/null 2>&1 || true
-    sleep 10
+    sleep 20
   done
 ) &
 

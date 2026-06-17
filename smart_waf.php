@@ -70,6 +70,18 @@ $domains = $domainsStmt->fetchAll();
         </div>
     </div>
 
+    <div class="alert alert-info small">
+        <i class="fas fa-circle-info me-1"></i><strong>Как это работает и не положит ли сайт:</strong> каждый тумблер создаёт WAF custom rule (Rulesets) на ваших доменах.
+        <ul class="mb-0 mt-1 ps-3">
+            <li><strong>Плохие ASN</strong> (<code>ip.geoip.asnum in {...}</code>) — блок хостинг-провайдеров (DigitalOcean/Hetzner/AWS). Низкий риск, но если ваш мониторинг/прокси на таком хостинге — он тоже попадёт под блок.</li>
+            <li><strong>Рисковые страны</strong> (<code>ip.geoip.country</code>) — блок/Challenge для стран. <span class="text-danger">Риск</span>: заблокирует и поисковики из этих стран — см. вкладку «Геоблокировка» с галочкой «не блокировать поисковики».</li>
+            <li><strong>Проверка ботов</strong> (JS Challenge для <code>not cf.client.bot</code>) — <span class="text-danger">высокий риск</span>: Challenge всем, кто не верифицирован. Может мешать API/мобильным приложениям.</li>
+            <li><strong>WordPress</strong> (<code>/wp-login.php</code>, <code>/xmlrpc.php</code>) — безопасно для обычных сайтов; не включайте, если по этим путям работает интеграция.</li>
+            <li><strong>Rate Limiting</strong> — ограничение запросов с одного IP. Низкий риск; слишком жёсткий лимит может задеть NAT/корпоративные сети.</li>
+        </ul>
+        Все правила можно удалить в Cloudflare (Security → WAF → Custom rules) или отключив тумблер.
+    </div>
+
     <div class="row g-4">
         <!-- Rule 1: Block Bad ASNs -->
         <div class="col-md-4">

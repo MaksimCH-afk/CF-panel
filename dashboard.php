@@ -51,6 +51,18 @@ if ($search) {
     $params[] = "%$search%";
 }
 
+// Фильтр по IP (на котором стоит сайт в Cloudflare) — своего рода «группа по IP»
+$ip_filter = trim($_GET['ip'] ?? '');
+if ($ip_filter !== '') {
+    $filters[] = "ca.dns_ip LIKE ?";
+    $params[] = "%$ip_filter%";
+}
+
+// Список уникальных IP для выпадающего фильтра
+$ipListStmt = $pdo->prepare("SELECT dns_ip, COUNT(*) cnt FROM cloudflare_accounts WHERE user_id = ? AND dns_ip IS NOT NULL AND dns_ip != '' GROUP BY dns_ip ORDER BY cnt DESC, dns_ip");
+$ipListStmt->execute([$userId]);
+$ipList = $ipListStmt->fetchAll();
+
 // Получаем общее количество
 $countSql = "SELECT COUNT(*) FROM cloudflare_accounts ca WHERE " . implode(' AND ', $filters);
 $countStmt = $pdo->prepare($countSql);
@@ -302,7 +314,15 @@ function getDomainStatusInfo($status, $httpCode = null) {
                         </option>
                     <?php endforeach; ?>
                 </select>
-                <input type="text" id="searchInput" class="form-control form-control-sm" style="width: 200px;" 
+                <select id="ipFilter" class="form-select form-select-sm" style="width: 170px;" onchange="applyFilters()" title="Фильтр по IP сайта">
+                    <option value="">Все IP</option>
+                    <?php foreach ($ipList as $ipRow): ?>
+                        <option value="<?php echo htmlspecialchars($ipRow['dns_ip']); ?>" <?php echo $ip_filter === $ipRow['dns_ip'] ? 'selected' : ''; ?>>
+                            <?php echo htmlspecialchars($ipRow['dns_ip']); ?> (<?php echo (int)$ipRow['cnt']; ?>)
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <input type="text" id="searchInput" class="form-control form-control-sm" style="width: 200px;"
                        placeholder="Поиск..." value="<?php echo htmlspecialchars($search); ?>" onkeyup="searchDomains(event)">
             </div>
         </div>
@@ -396,6 +416,7 @@ function getDomainStatusInfo($status, $httpCode = null) {
                                             <li><a class="dropdown-item" href="#" onclick="updateDNS(<?php echo $domain['id']; ?>)"><i class="fas fa-globe me-2 text-primary"></i>Обновить DNS</a></li>
                                             <li><a class="dropdown-item" href="#" onclick="checkSSL(<?php echo $domain['id']; ?>)"><i class="fas fa-shield-alt me-2 text-success"></i>Проверить SSL</a></li>
                                             <li><a class="dropdown-item" href="#" onclick="checkStatus(<?php echo $domain['id']; ?>)"><i class="fas fa-heartbeat me-2 text-danger"></i>Проверить статус</a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="purgeDomainCache(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')"><i class="fas fa-broom me-2 text-warning"></i>Очистить кэш</a></li>
                                             <li><hr class="dropdown-divider"></li>
                                             <li><h6 class="dropdown-header">Безопасность</h6></li>
                                             <li><a class="dropdown-item" href="#" onclick="toggleUnderAttack(<?php echo $domain['id']; ?>, true)"><i class="fas fa-bolt me-2 text-warning"></i>Under Attack ON</a></li>
@@ -690,9 +711,12 @@ function refreshPage() { window.location.reload(); }
 function applyFilters() {
     const group = document.getElementById('groupFilter').value;
     const search = document.getElementById('searchInput').value;
+    const ipEl = document.getElementById('ipFilter');
+    const ip = ipEl ? ipEl.value : '';
     const params = new URLSearchParams(window.location.search);
     if(group) params.set('group_id', group); else params.delete('group_id');
     if(search) params.set('search', search); else params.delete('search');
+    if(ip) params.set('ip', ip); else params.delete('ip');
     params.set('page', 1);
     window.location.search = params.toString();
 }
@@ -732,6 +756,15 @@ async function bulkDeleteDomains() {
 }
 
 // Individual Actions
+async function purgeDomainCache(id, name) {
+    if (!confirm(`Очистить весь кэш Cloudflare для ${name}?`)) return;
+    try {
+        const body = new URLSearchParams({ domain_id: id, purge_everything: '1' });
+        const res = await fetch('cache_api.php', { method: 'POST', headers: {'Content-Type':'application/x-www-form-urlencoded'}, body });
+        const json = await res.json();
+        showToast(json.success ? `Кэш очищен: ${name}` : (json.error || 'Не удалось очистить кэш'), json.success ? 'success' : 'error');
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
 async function updateDNS(id) { await addTaskToQueue('update_dns_ip', [id], 'Обновление DNS'); }
 async function checkSSL(id) { await addTaskToQueue('check_ssl_status', [id], 'Проверка SSL'); }
 async function checkStatus(id) { await addTaskToQueue('check_domain_status', [id], 'Проверка статуса'); }

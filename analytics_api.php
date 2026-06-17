@@ -44,6 +44,26 @@ try {
             echo json_encode($result);
             break;
 
+        case 'dashboard':
+            // Аналитика домена через GraphQL
+            $domainId = (int)($data['domain_id'] ?? 0);
+            $days = max(1, min(30, (int)($data['days'] ?? 7)));
+            if ($domainId <= 0) {
+                throw new Exception('Не указан домен');
+            }
+            $stmt = $pdo->prepare("SELECT ca.domain, ca.zone_id, cc.email, cc.api_key FROM cloudflare_accounts ca JOIN cloudflare_credentials cc ON ca.account_id = cc.id WHERE ca.id = ? AND ca.user_id = ?");
+            $stmt->execute([$domainId, $userId]);
+            $domainRow = $stmt->fetch();
+            if (!$domainRow || !$domainRow['zone_id']) {
+                throw new Exception('Домен или zone_id не найден');
+            }
+            $proxies = getProxies($pdo, $userId);
+            $a = cfZoneAnalyticsGraphQL($pdo, $domainRow['email'], $domainRow['api_key'], $domainRow['zone_id'], $days, $proxies, $userId);
+            echo json_encode($a['success']
+                ? ['success' => true, 'domain' => $domainRow['domain'], 'days' => $a['days'], 'totals' => $a['totals']]
+                : ['success' => false, 'error' => $a['error']]);
+            break;
+
         default:
             throw new Exception('Неизвестное действие');
     }

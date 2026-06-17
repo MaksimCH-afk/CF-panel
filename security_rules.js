@@ -506,11 +506,14 @@ function applyGeoBlocker() {
     const whitelistCodes = whitelistCountries.map(c => c.code);
     const blacklistCodes = blacklistCountries.map(c => c.code);
     
+    const allowBots = document.getElementById('geoAllowBots') ? document.getElementById('geoAllowBots').checked : true;
+
     $.post('security_rules_api_minimal.php', {
         action: 'apply_geo_blocker',
         mode: mode,
         whitelist: whitelistCodes,
         blacklist: blacklistCodes,
+        allow_bots: allowBots ? 1 : 0,
         scope: scope
     })
     .done(function(response) {
@@ -676,12 +679,20 @@ function deployWorker() {
     }
     
     showLoading('Развертывание Worker...');
-    
+
+    // Доп. конфиг: пути для шаблонов 404/410
+    const config = {};
+    const pathsEl = document.getElementById('configPaths');
+    if (pathsEl && pathsEl.value.trim()) {
+        config.paths = pathsEl.value.split('\n').map(s => s.trim()).filter(Boolean);
+    }
+
     $.post('security_rules_api_minimal.php', {
         action: 'deploy_worker',
         template: currentWorkerTemplate,
         route: route,
-        scope: scope
+        scope: scope,
+        config: config
     })
     .done(function(response) {
         hideLoading();
@@ -912,7 +923,9 @@ function generateConfigPanel(template) {
         'bot-only': 'Bot Blocker',
         'geo-only': 'Geo Blocker',
         'rate-limit': 'Rate Limiting',
-        'referrer-only': 'Referrer Only'
+        'referrer-only': 'Referrer Only',
+        'gone-410': 'Gone 410',
+        'not-found-404': 'Not Found 404'
     };
     $('#configPanelTitle').text('Настройка: ' + (templateNames[template] || template));
     
@@ -946,6 +959,19 @@ function generateConfigPanel(template) {
             break;
         case 'referrer-only':
             html += generateReferrerOnlyConfig();
+            break;
+        case 'gone-410':
+        case 'not-found-404':
+            html += `
+                <div class="config-section mb-3">
+                    <h6 class="border-bottom pb-2"><i class="fas fa-list"></i> Пути</h6>
+                    <div class="mb-2">
+                        <label class="form-label small">Пути для кода ответа (по одному на строку). Пусто = весь сайт</label>
+                        <textarea class="form-control form-control-sm" id="configPaths" rows="3" placeholder="/old-page&#10;/removed/"></textarea>
+                        <small class="text-muted">Совпадение по началу пути (startsWith). Остальные страницы работают как обычно.</small>
+                    </div>
+                </div>
+            `;
             break;
         default:
             html += '<p class="text-muted">Выберите шаблон для настройки</p>';

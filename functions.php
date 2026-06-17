@@ -236,6 +236,176 @@ function cfFetchAllZones($pdo, $email, $apiKey, $proxies = [], $userId = null, $
     return ['success' => true, 'zones' => $zones, 'error' => null];
 }
 
+/* =====================================================================
+ * WAF Custom Rules через современный Rulesets API
+ * (фаза http_request_firewall_custom). Заменяет устаревший firewall/rules,
+ * который Cloudflare перевёл в maintenance mode (код 10020).
+ * ===================================================================== */
+
+/**
+ * Получает entrypoint-ruleset фазы custom firewall: его id и текущие правила.
+ * Если ruleset ещё не создан (404) — возвращает пустой список.
+ *
+ * @return array ['id' => string|null, 'rules' => array]
+ */
+function cfGetCustomRuleset($pdo, $email, $apiKey, $zoneId, $proxies = [], $userId = null) {
+    $resp = cloudflareApiRequestDetailed(
+        $pdo, $email, $apiKey,
+        "zones/$zoneId/rulesets/phases/http_request_firewall_custom/entrypoint",
+        'GET', [], $proxies, $userId
+    );
+    if (!$resp['success']) {
+        // 404 = ещё нет ruleset'а для фазы; это нормально
+        return ['id' => null, 'rules' => [], 'http_code' => $resp['http_code'] ?? 0, 'error' => $resp['http_code'] == 404 ? null : cfReadableError($resp)];
+    }
+    $data = $resp['data'];
+    $id = is_object($data) ? ($data->id ?? null) : ($data['id'] ?? null);
+    $rules = [];
+    $rawRules = is_object($data) ? ($data->rules ?? []) : ($data['rules'] ?? []);
+    foreach ($rawRules as $r) {
+        $rules[] = json_decode(json_encode($r), true); // в ассоц. массив
+    }
+    return ['id' => $id, 'rules' => $rules, 'http_code' => 200, 'error' => null];
+}
+
+/**
+ * Оставляет в правиле только поля, которые принимает PUT entrypoint
+ * (без id/version/last_updated и пр. служебных).
+ */
+function cfSanitizeRule($rule) {
+    $out = [
+        'action' => $rule['action'] ?? 'block',
+        'expression' => $rule['expression'] ?? 'true',
+        'description' => $rule['description'] ?? '',
+        'enabled' => array_key_exists('enabled', $rule) ? (bool)$rule['enabled'] : true,
+    ];
+    if (!empty($rule['action_parameters'])) {
+        $out['action_parameters'] = $rule['action_parameters'];
+    }
+    if (!empty($rule['ratelimit'])) {
+        $out['ratelimit'] = $rule['ratelimit'];
+    }
+    if (!empty($rule['logging'])) {
+        $out['logging'] = $rule['logging'];
+    }
+    return $out;
+}
+
+/**
+ * Полностью перезаписывает правила custom-firewall фазы (создаёт ruleset, если его нет).
+ *
+ * @param array $rules массив правил (будут очищены через cfSanitizeRule)
+ * @return array результат cloudflareApiRequestDetailed
+ */
+function cfPutCustomRules($pdo, $email, $apiKey, $zoneId, $rules, $proxies = [], $userId = null) {
+    $clean = array_map('cfSanitizeRule', $rules);
+    return cloudflareApiRequestDetailed(
+        $pdo, $email, $apiKey,
+        "zones/$zoneId/rulesets/phases/http_request_firewall_custom/entrypoint",
+        'PUT',
+        ['rules' => array_values($clean)],
+        $proxies, $userId
+    );
+}
+
+/**
+ * Добавляет одно WAF custom-правило (rulesets), сохраняя существующие.
+ *
+ * @param array $rule ['action','expression','description', опц. 'action_parameters','enabled','logging']
+ * @return array ['success'=>bool, 'error'=>string|null, 'rules_count'=>int]
+ */
+function cfAddCustomRule($pdo, $email, $apiKey, $zoneId, $rule, $proxies = [], $userId = null) {
+    $current = cfGetCustomRuleset($pdo, $email, $apiKey, $zoneId, $proxies, $userId);
+    if ($current['error']) {
+        return ['success' => false, 'error' => $current['error'], 'rules_count' => 0];
+    }
+    $rules = $current['rules'];
+    $rules[] = $rule;
+    $put = cfPutCustomRules($pdo, $email, $apiKey, $zoneId, $rules, $proxies, $userId);
+    if (!$put['success']) {
+        return ['success' => false, 'error' => cfReadableError($put), 'rules_count' => 0];
+    }
+    return ['success' => true, 'error' => null, 'rules_count' => count($rules)];
+}
+
+/**
+ * Заменяет все custom-правила фазы переданным набором (для пресетов «с нуля»).
+ */
+function cfSetCustomRules($pdo, $email, $apiKey, $zoneId, $rules, $proxies = [], $userId = null) {
+    $put = cfPutCustomRules($pdo, $email, $apiKey, $zoneId, $rules, $proxies, $userId);
+    if (!$put['success']) {
+        return ['success' => false, 'error' => cfReadableError($put)];
+    }
+    return ['success' => true, 'error' => null];
+}
+
+/**
+ * Аналитика зоны через GraphQL API (легаси zones/:id/analytics/dashboard отключён CF).
+ * Возвращает дневную статистику запросов/трафика/угроз за N дней.
+ *
+ * @return array ['success'=>bool, 'days'=>[['date','requests','bytes','threats']...], 'totals'=>[...], 'error'=>string|null]
+ */
+function cfZoneAnalyticsGraphQL($pdo, $email, $apiKey, $zoneId, $days = 7, $proxies = [], $userId = null, $authType = null) {
+    $since = gmdate('Y-m-d', time() - $days * 86400);
+    $until = gmdate('Y-m-d');
+    $query = 'query($zone:String!,$since:Date!,$until:Date!){viewer{zones(filter:{zoneTag:$zone}){httpRequests1dGroups(limit:60,filter:{date_geq:$since,date_leq:$until},orderBy:[date_ASC]){dimensions{date}sum{requests bytes threats}uniq{uniques}}}}}';
+    $body = ['query' => $query, 'variables' => ['zone' => $zoneId, 'since' => $since, 'until' => $until]];
+
+    // GraphQL — отдельный endpoint (не /zones/...). Используем общий низкоуровневый запрос.
+    list($headers) = cfBuildAuthHeaders($email, $apiKey, $authType);
+    $ch = curl_init('https://api.cloudflare.com/client/v4/graphql');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'POST');
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    if (!empty($proxies)) {
+        $proxy = getRandomProxy($proxies);
+        if ($proxy && preg_match('/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)@([^:@]+):(.+)$/', $proxy, $m)) {
+            curl_setopt($ch, CURLOPT_PROXY, "{$m[1]}:{$m[2]}");
+            curl_setopt($ch, CURLOPT_PROXYUSERPWD, "{$m[3]}:{$m[4]}");
+        }
+    }
+    $resp = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    $decoded = json_decode($resp, true);
+    if (!is_array($decoded)) {
+        return ['success' => false, 'days' => [], 'totals' => [], 'error' => "GraphQL: пустой ответ (HTTP $httpCode)"];
+    }
+    if (!empty($decoded['errors'])) {
+        $msg = $decoded['errors'][0]['message'] ?? 'GraphQL error';
+        if (stripos($msg, 'permission') !== false) {
+            $msg = 'нет права Zone Analytics у токена';
+        }
+        return ['success' => false, 'days' => [], 'totals' => [], 'error' => $msg];
+    }
+
+    $groups = $decoded['data']['viewer']['zones'][0]['httpRequests1dGroups'] ?? [];
+    $daysOut = [];
+    $tReq = 0; $tBytes = 0; $tThreats = 0;
+    foreach ($groups as $g) {
+        $req = $g['sum']['requests'] ?? 0;
+        $bytes = $g['sum']['bytes'] ?? 0;
+        $threats = $g['sum']['threats'] ?? 0;
+        $daysOut[] = [
+            'date' => $g['dimensions']['date'] ?? '',
+            'requests' => $req,
+            'bytes' => $bytes,
+            'threats' => $threats,
+            'uniques' => $g['uniq']['uniques'] ?? 0,
+        ];
+        $tReq += $req; $tBytes += $bytes; $tThreats += $threats;
+    }
+    return [
+        'success' => true,
+        'days' => $daysOut,
+        'totals' => ['requests' => $tReq, 'bytes' => $tBytes, 'threats' => $tThreats],
+        'error' => null,
+    ];
+}
+
 /**
  * Улучшенная функция для API запросов к Cloudflare с детальным логированием ошибок
  * Поддерживает как legacy аутентификацию (Email + API Key), так и современные Bearer токены
@@ -3086,7 +3256,33 @@ function deleteCloudflareWorkerTemplate($pdo, $userId, $templateId) {
     return $stmt->rowCount() > 0;
 }
 
-function cloudflareUploadWorkerScript($pdo, $credentials, $zoneId, $scriptContent, $userId = null, $proxies = []) {
+/**
+ * Возвращает account_id зоны (нужен для account-level Workers).
+ */
+function cfGetAccountId($pdo, $credentials, $zoneId, $proxies = [], $userId = null) {
+    $resp = cloudflareApiRequestDetailed($pdo, $credentials['email'], $credentials['api_key'], "zones/$zoneId", 'GET', [], $proxies, $userId, $credentials['auth_type'] ?? null);
+    if ($resp['success'] && isset($resp['data'])) {
+        $d = $resp['data'];
+        if (is_object($d) && isset($d->account->id)) return $d->account->id;
+        if (is_array($d) && isset($d['account']['id'])) return $d['account']['id'];
+    }
+    return null;
+}
+
+/**
+ * Безопасное имя Worker-скрипта из домена (a-z0-9-_, до 63 символов).
+ */
+function cfWorkerScriptName($domain) {
+    $name = strtolower(preg_replace('/[^a-z0-9]+/i', '-', $domain));
+    $name = trim($name, '-');
+    return 'cfp-' . substr($name, 0, 50);
+}
+
+/**
+ * Загружает Worker-скрипт на уровень аккаунта (accounts/:id/workers/scripts/:name).
+ * Современный способ; легаси zones/:id/workers/script больше не привязывается к маршрутам.
+ */
+function cloudflareUploadWorkerScript($pdo, $credentials, $accountId, $scriptName, $scriptContent, $userId = null, $proxies = []) {
     $result = [
         'success' => false,
         'http_code' => 0,
@@ -3096,12 +3292,12 @@ function cloudflareUploadWorkerScript($pdo, $credentials, $zoneId, $scriptConten
         'raw_response' => null
     ];
 
-    if (!$zoneId) {
-        $result['api_errors'][] = ['message' => 'Zone ID не указан'];
+    if (!$accountId || !$scriptName) {
+        $result['api_errors'][] = ['message' => 'Account ID или имя скрипта не указаны'];
         return $result;
     }
 
-    $endpointUrl = "https://api.cloudflare.com/client/v4/zones/$zoneId/workers/script";
+    $endpointUrl = "https://api.cloudflare.com/client/v4/accounts/$accountId/workers/scripts/$scriptName";
     $ch = curl_init($endpointUrl);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PUT');
@@ -3134,7 +3330,7 @@ function cloudflareUploadWorkerScript($pdo, $credentials, $zoneId, $scriptConten
 
     if ($response === false || !empty($result['curl_error'])) {
         if ($userId) {
-            logAction($pdo, $userId, 'Worker Upload Failed', "Zone: $zoneId, Error: {$result['curl_error']}");
+            logAction($pdo, $userId, 'Worker Upload Failed', "Script: $scriptName, Error: {$result['curl_error']}");
         }
         return $result;
     }
@@ -3142,7 +3338,7 @@ function cloudflareUploadWorkerScript($pdo, $credentials, $zoneId, $scriptConten
     $decoded = json_decode($response);
     if (json_last_error() !== JSON_ERROR_NONE) {
         if ($userId) {
-            logAction($pdo, $userId, 'Worker Upload Failed', "Zone: $zoneId, JSON Error: " . json_last_error_msg());
+            logAction($pdo, $userId, 'Worker Upload Failed', "Script: $scriptName, JSON Error: " . json_last_error_msg());
         }
         return $result;
     }
@@ -3151,7 +3347,7 @@ function cloudflareUploadWorkerScript($pdo, $credentials, $zoneId, $scriptConten
         $result['success'] = true;
         $result['data'] = $decoded->result ?? null;
         if ($userId) {
-            logAction($pdo, $userId, 'Worker Script Uploaded', "Zone: $zoneId");
+            logAction($pdo, $userId, 'Worker Script Uploaded', "Script: $scriptName");
         }
     } else {
         $result['api_errors'] = isset($decoded->errors) ? array_map(function ($err) {
@@ -3161,7 +3357,7 @@ function cloudflareUploadWorkerScript($pdo, $credentials, $zoneId, $scriptConten
             ];
         }, $decoded->errors) : [];
         if ($userId) {
-            logAction($pdo, $userId, 'Worker Upload Failed', "Zone: $zoneId, API Errors: " . json_encode($result['api_errors']));
+            logAction($pdo, $userId, 'Worker Upload Failed', "Script: $scriptName, API Errors: " . json_encode($result['api_errors']));
         }
     }
 
@@ -3172,11 +3368,10 @@ function cloudflareListWorkerRoutes($pdo, $credentials, $zoneId, $proxies, $user
     return cloudflareApiRequestDetailed($pdo, $credentials['email'], $credentials['api_key'], "zones/$zoneId/workers/routes", 'GET', [], $proxies, $userId);
 }
 
-function cloudflareEnsureWorkerRoute($pdo, $credentials, $zoneId, $routePattern, $userId, $proxies, $enabled = true) {
+function cloudflareEnsureWorkerRoute($pdo, $credentials, $zoneId, $routePattern, $scriptName, $userId, $proxies, $enabled = true) {
     $payload = [
         'pattern' => $routePattern,
-        'script' => '',
-        'enabled' => $enabled ? true : false
+        'script' => $scriptName,
     ];
 
     $routesResponse = cloudflareListWorkerRoutes($pdo, $credentials, $zoneId, $proxies, $userId);
@@ -3219,7 +3414,12 @@ function recordWorkerRouteState($pdo, $userId, $domainId, $routeId, $routePatter
             last_error = excluded.last_error,
             applied_at = excluded.applied_at,
             updated_at = excluded.updated_at");
-    $stmt->execute([$userId, $domainId, $routeId, $routePattern, $scriptName, $templateId, $status, $error]);
+    // Запись состояния — best-effort: если БД временно занята, не валим деплой (CF уже применён)
+    try {
+        $stmt->execute([$userId, $domainId, $routeId, $routePattern, $scriptName, $templateId, $status, $error]);
+    } catch (Exception $e) {
+        error_log('recordWorkerRouteState failed: ' . $e->getMessage());
+    }
 }
 
 /**
@@ -3273,7 +3473,14 @@ function generateWorkerScript($templateContent, $config = []) {
     // Замена URL_EXCEPTIONS_LIST
     $urlExceptions = $config['url_exceptions'] ?? $defaultUrlExceptions;
     $script = str_replace('{{URL_EXCEPTIONS_LIST}}', json_encode($urlExceptions), $script);
-    
+
+    // Замена PATHS_LIST (для шаблонов 404/410). Пусто = весь сайт.
+    $paths = $config['paths'] ?? [];
+    if (is_string($paths)) {
+        $paths = array_values(array_filter(array_map('trim', preg_split('/[\n,]+/', $paths))));
+    }
+    $script = str_replace('{{PATHS_LIST}}', json_encode($paths), $script);
+
     return $script;
 }
 
@@ -3288,11 +3495,18 @@ function cloudflareApplyWorkerTemplate($pdo, $userId, $domainRow, $credentials, 
         $pdo->prepare("UPDATE cloudflare_accounts SET zone_id = ? WHERE id = ?")->execute([$zoneId, $domainRow['id']]);
     }
 
+    // Account-level Worker: получаем account_id и формируем имя скрипта
+    $accountId = cfGetAccountId($pdo, $credentials, $zoneId, $proxies, $userId);
+    if (!$accountId) {
+        return ['success' => false, 'error' => 'Не удалось определить account_id (нужно право Workers Scripts / доступ к аккаунту)'];
+    }
+    $scriptName = cfWorkerScriptName($domainRow['domain']);
+
     $scriptContent = generateWorkerScript($templateRow['script'], $config);
-    $upload = cloudflareUploadWorkerScript($pdo, $credentials, $zoneId, $scriptContent, $userId, $proxies);
+    $upload = cloudflareUploadWorkerScript($pdo, $credentials, $accountId, $scriptName, $scriptContent, $userId, $proxies);
     if (!$upload['success']) {
         recordWorkerRouteState($pdo, $userId, $domainRow['id'], null, $routePattern, $templateRow['id'], $templateRow['name'], 'failed', json_encode($upload['api_errors'] ?? $upload['curl_error']));
-        return ['success' => false, 'error' => 'Не удалось загрузить Worker скрипт', 'details' => $upload];
+        return ['success' => false, 'error' => 'Не удалось загрузить Worker скрипт: ' . cfReadableError($upload), 'details' => $upload];
     }
 
     $pattern = $routePattern;
@@ -3303,7 +3517,7 @@ function cloudflareApplyWorkerTemplate($pdo, $userId, $domainRow, $credentials, 
         $pattern = str_replace('{{domain}}', $domainRow['domain'], $pattern);
     }
 
-    $routeResponse = cloudflareEnsureWorkerRoute($pdo, $credentials, $zoneId, $pattern, $userId, $proxies, true);
+    $routeResponse = cloudflareEnsureWorkerRoute($pdo, $credentials, $zoneId, $pattern, $scriptName, $userId, $proxies, true);
     if (!$routeResponse['success']) {
         recordWorkerRouteState($pdo, $userId, $domainRow['id'], null, $pattern, $templateRow['id'], $templateRow['name'], 'failed', json_encode($routeResponse['api_errors'] ?? $routeResponse['curl_error']));
         return ['success' => false, 'error' => 'Не удалось обновить маршрут', 'details' => $routeResponse];
@@ -3321,8 +3535,14 @@ function cloudflareApplyWorkerTemplate($pdo, $userId, $domainRow, $credentials, 
         null
     );
 
-    $updateTemplateStats = $pdo->prepare("UPDATE cloudflare_worker_scripts SET usage_count = usage_count + 1, last_used = datetime('now'), updated_at = datetime('now') WHERE id = ? AND user_id = ?");
-    $updateTemplateStats->execute([$templateRow['id'], $userId]);
+    if (!empty($templateRow['id'])) {
+        try {
+            $updateTemplateStats = $pdo->prepare("UPDATE cloudflare_worker_scripts SET usage_count = usage_count + 1, last_used = datetime('now'), updated_at = datetime('now') WHERE id = ? AND user_id = ?");
+            $updateTemplateStats->execute([$templateRow['id'], $userId]);
+        } catch (Exception $e) {
+            error_log('worker usage stats update failed: ' . $e->getMessage());
+        }
+    }
 
     logAction($pdo, $userId, 'Worker Applied', "Domain: {$domainRow['domain']}, Pattern: $pattern, Template: {$templateRow['name']}");
 

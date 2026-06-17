@@ -116,7 +116,9 @@ function getWorkerTemplate($template) {
         'bot-only' => '/worker_templates/bot-only.js',
         'geo-only' => '/worker_templates/geo-only.js',
         'referrer-only' => '/worker_templates/referrer-only.js',
-        'rate-limit' => '/worker_templates/rate-limit.js'
+        'rate-limit' => '/worker_templates/rate-limit.js',
+        'gone-410' => '/worker_templates/gone-410.js',
+        'not-found-404' => '/worker_templates/not-found-404.js'
     ];
     
     if (!isset($templateFiles[$template])) {
@@ -195,28 +197,14 @@ function applyBotBlocker($pdo, $userId, $data) {
         if (!$domain || !$domain['zone_id']) continue;
         
         $expression = buildBotBlockExpression($badBots);
-        
-        $ruleData = [
+
+        $res = cfAddCustomRule($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], [
             'action' => 'block',
-            'description' => 'Auto Bot Blocker - CloudPanel',
-            'filter' => [
-                'expression' => $expression,
-                'paused' => false
-            ]
-        ];
-        
-        $response = cloudflareApiRequestDetailed(
-            $pdo,
-            $domain['email'],
-            $domain['api_key'],
-            "zones/{$domain['zone_id']}/firewall/rules",
-            'POST',
-            [$ruleData],
-            $proxies,
-            $userId
-        );
-        
-        if ($response['success']) {
+            'expression' => $expression,
+            'description' => 'Auto Bot Blocker - CloudPanel'
+        ], $proxies, $userId);
+
+        if ($res['success']) {
             $applied++;
             saveSecurityRule($pdo, $userId, $domainId, 'bad_bot', $expression);
         }
@@ -326,24 +314,23 @@ function applyGeoBlocker($pdo, $userId, $data) {
         
         $domainRulesCreated = 0;
         
+        // Опция: не блокировать проверенные поисковые боты (Google/Bing/Yandex...)
+        // Иначе whitelist «только страна X» заблокирует и поисковики (они краулят из других стран).
+        $allowBots = !empty($data['allow_bots']);
+        $botExcept = $allowBots ? ' and (not cf.client.bot)' : '';
+
         // Whitelist
         if (($mode === 'whitelist' || $mode === 'both') && !empty($whitelist)) {
             $codes = implode(' ', array_map(fn($c) => '"' . $c . '"', $whitelist));
-            $expression = "(not ip.geoip.country in {{$codes}})";
-            
-            $rule = [
+            $expression = "(not ip.geoip.country in {{$codes}}{$botExcept})";
+
+            $res = cfAddCustomRule($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], [
                 'action' => 'block',
-                'description' => 'Geo Whitelist - CloudPanel',
-                'filter' => ['expression' => $expression, 'paused' => false]
-            ];
-            
-            $response = cloudflareApiRequestDetailed(
-                $pdo, $domain['email'], $domain['api_key'],
-                "zones/{$domain['zone_id']}/firewall/rules",
-                'POST', [$rule], $proxies, $userId
-            );
-            
-            if ($response['success']) {
+                'expression' => $expression,
+                'description' => 'Geo Whitelist - CloudPanel'
+            ], $proxies, $userId);
+
+            if ($res['success']) {
                 $domainRulesCreated++;
                 $rulesCreated++;
                 saveSecurityRule($pdo, $userId, $domainId, 'geo_whitelist', json_encode(['countries' => $whitelist]));
@@ -354,20 +341,14 @@ function applyGeoBlocker($pdo, $userId, $data) {
         if (($mode === 'blacklist' || $mode === 'both') && !empty($blacklist)) {
             $codes = implode(' ', array_map(fn($c) => '"' . $c . '"', $blacklist));
             $expression = "(ip.geoip.country in {{$codes}})";
-            
-            $rule = [
+
+            $res = cfAddCustomRule($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], [
                 'action' => 'block',
-                'description' => 'Geo Blacklist - CloudPanel',
-                'filter' => ['expression' => $expression, 'paused' => false]
-            ];
-            
-            $response = cloudflareApiRequestDetailed(
-                $pdo, $domain['email'], $domain['api_key'],
-                "zones/{$domain['zone_id']}/firewall/rules",
-                'POST', [$rule], $proxies, $userId
-            );
-            
-            if ($response['success']) {
+                'expression' => $expression,
+                'description' => 'Geo Blacklist - CloudPanel'
+            ], $proxies, $userId);
+
+            if ($res['success']) {
                 $domainRulesCreated++;
                 $rulesCreated++;
                 saveSecurityRule($pdo, $userId, $domainId, 'geo_blacklist', json_encode(['countries' => $blacklist]));
@@ -407,19 +388,13 @@ function applyReferrerOnly($pdo, $userId, $data) {
         
         if (!$domain || !$domain['zone_id']) continue;
         
-        $ruleData = [
-            'action' => $action === 'challenge' ? 'challenge' : 'block',
-            'description' => 'Auto Referrer Protection - CloudPanel',
-            'filter' => ['expression' => $expression, 'paused' => false]
-        ];
-        
-        $response = cloudflareApiRequestDetailed(
-            $pdo, $domain['email'], $domain['api_key'],
-            "zones/{$domain['zone_id']}/firewall/rules",
-            'POST', [$ruleData], $proxies, $userId
-        );
-        
-        if ($response['success']) {
+        $res = cfAddCustomRule($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], [
+            'action' => $action === 'challenge' ? 'managed_challenge' : 'block',
+            'expression' => $expression,
+            'description' => 'Auto Referrer Protection - CloudPanel'
+        ], $proxies, $userId);
+
+        if ($res['success']) {
             $applied++;
             saveSecurityRule($pdo, $userId, $domainId, 'referrer_only', json_encode($allowedReferrers));
         }
@@ -446,51 +421,47 @@ function deployWorker($pdo, $userId, $data) {
     }
     
     $applied = 0;
+    $errors = [];
     $proxies = getProxies($pdo, $userId);
-    
+
     foreach ($domainIds as $domainId) {
         $stmt = $pdo->prepare("
-            SELECT ca.*, cc.email, cc.api_key
+            SELECT ca.*, cc.email, cc.api_key, cc.auth_type
             FROM cloudflare_accounts ca
             JOIN cloudflare_credentials cc ON ca.account_id = cc.id
             WHERE ca.id = ? AND ca.user_id = ?
         ");
         $stmt->execute([$domainId, $userId]);
         $domain = $stmt->fetch();
-        
+
         if (!$domain || !$domain['zone_id']) continue;
-        
-        $scriptName = "security-{$template}-" . uniqid();
-        $scriptCode = generateWorkerScript($workerData['code'], $config);
-        
-        $uploadResponse = cloudflareApiRequestDetailed(
-            $pdo, $domain['email'], $domain['api_key'],
-            "accounts/{$domain['account_id']}/workers/scripts/{$scriptName}",
-            'PUT', ['script' => $scriptCode], $proxies, $userId
-        );
-        
-        if ($uploadResponse['success']) {
-            $routePattern = str_replace('*', $domain['domain'], $route);
-            
-            $routeResponse = cloudflareApiRequestDetailed(
-                $pdo, $domain['email'], $domain['api_key'],
-                "zones/{$domain['zone_id']}/workers/routes",
-                'POST', ['pattern' => $routePattern, 'script' => $scriptName],
-                $proxies, $userId
-            );
-            
-            if ($routeResponse['success']) {
-                $applied++;
-                saveSecurityRule($pdo, $userId, $domainId, 'worker', json_encode([
-                    'template' => $template,
-                    'script_name' => $scriptName,
-                    'route' => $routePattern
-                ]));
-            }
+
+        // Маршрут: '*' (или пусто) = весь домен (домен/*); {{domain}} тоже поддерживаем
+        $r = trim($route);
+        if ($r === '' || $r === '*') {
+            $routePattern = $domain['domain'] . '/*';
+        } else {
+            $routePattern = str_replace('{{domain}}', $domain['domain'], $r);
+        }
+
+        $credentials = ['email' => $domain['email'], 'api_key' => $domain['api_key'], 'auth_type' => $domain['auth_type'] ?? null];
+        $templateRow = ['id' => null, 'name' => $template, 'script' => $workerData['code']];
+
+        // Используем общий (исправленный) путь деплоя: account-level скрипт + маршрут
+        $apply = cloudflareApplyWorkerTemplate($pdo, $userId, $domain, $credentials, $templateRow, $routePattern, $proxies, $config);
+
+        if (!empty($apply['success'])) {
+            $applied++;
+            saveSecurityRule($pdo, $userId, $domainId, 'worker', json_encode([
+                'template' => $template,
+                'route' => $apply['pattern'] ?? $routePattern
+            ]));
+        } else {
+            $errors[] = $domain['domain'] . ': ' . ($apply['error'] ?? 'unknown');
         }
     }
-    
-    return ['success' => true, 'applied' => $applied, 'total' => count($domainIds), 'template' => $template];
+
+    return ['success' => $applied > 0, 'applied' => $applied, 'total' => count($domainIds), 'template' => $template, 'errors' => $errors];
 }
 
 // === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===

@@ -75,6 +75,23 @@ include 'sidebar.php';
                             <small class="d-block mt-1 opacity-75">Установить время кеша браузера</small>
                         </button>
                     </div>
+
+                    <hr class="my-4">
+                    <h6 class="fw-bold mb-3"><i class="fas fa-arrow-right-arrow-left me-2 text-primary"></i>301 Редирект</h6>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1">Откуда (путь). Пусто = весь сайт</label>
+                        <input type="text" id="redir301Source" class="form-control form-control-sm" placeholder="/old-page (пусто = весь сайт)">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1">Куда (полный URL)</label>
+                        <input type="text" id="redir301Target" class="form-control form-control-sm" placeholder="https://newsite.com/page или https://newsite.com/">
+                    </div>
+                    <button class="btn btn-outline-primary w-100" onclick="applyRedirect301()">
+                        <i class="fas fa-arrow-right-arrow-left me-2"></i>Применить 301 редирект
+                    </button>
+                    <div class="alert alert-secondary small mt-2 mb-0">
+                        <i class="fas fa-info-circle me-1"></i><strong>Как это работает:</strong> Cloudflare Page Rule с действием <code>forwarding_url</code> (301). Если «откуда» пусто — весь сайт (<code>*домен/*</code>) уходит на указанный URL. Не трогает сервер — редирект на edge Cloudflare. <strong>404/410</strong> теперь делается через воркер-шаблоны (вкладка Cloudflare Workers).
+                    </div>
                 </div>
             </div>
         </div>
@@ -177,6 +194,29 @@ function logMessage(message, type = 'info') {
 
 function clearLog() {
     document.getElementById('operationLog').innerHTML = '<div class="text-muted">Лог очищен...</div>';
+}
+
+async function applyRedirect301() {
+    const select = document.getElementById('domainSelect');
+    const domainId = select.value;
+    if (!domainId) { showToast('Выберите домен', 'warning'); return; }
+    const source = document.getElementById('redir301Source').value.trim();
+    const target = document.getElementById('redir301Target').value.trim();
+    if (!target) { showToast('Укажите целевой URL', 'warning'); return; }
+    const domainName = select.options[select.selectedIndex].dataset.domain;
+    logMessage(`Применяем 301 редирект для ${domainName} (${source || 'весь сайт'} → ${target})...`, 'info');
+    try {
+        const form = new URLSearchParams({ domain_id: domainId, rule_type: 'redirect_301', source, target });
+        const response = await fetch('page_rules_api.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() });
+        const data = await response.json();
+        if (data.success) {
+            logMessage(`✓ 301 редирект применён`, 'success');
+            showToast('301 редирект применён', 'success');
+        } else {
+            logMessage(`✗ Ошибка: ${data.error || 'unknown'}`, 'error');
+            showToast('Ошибка: ' + (data.error || 'unknown'), 'error');
+        }
+    } catch (err) { logMessage(`✗ Ошибка сети: ${err.message}`, 'error'); showToast('Ошибка сети', 'error'); }
 }
 
 async function applyRule(ruleType) {

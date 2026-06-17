@@ -1,7 +1,24 @@
 <?php
 require_once 'config.php';
 require_once 'functions.php';
-require_once 'security_rules_api.php'; // Используем функции из существующего API
+
+// Область применения (домены) по scope — локально, без подключения других endpoint'ов
+if (!function_exists('getScopeDomains')) {
+    function getScopeDomains($pdo, $userId, $scope) {
+        $type = $scope['type'] ?? 'all';
+        if ($type === 'group') {
+            $stmt = $pdo->prepare("SELECT id FROM cloudflare_accounts WHERE user_id = ? AND group_id = ?");
+            $stmt->execute([$userId, $scope['groupId'] ?? null]);
+            return $stmt->fetchAll(PDO::FETCH_COLUMN);
+        }
+        if ($type === 'selected') {
+            return $scope['domainIds'] ?? [];
+        }
+        $stmt = $pdo->prepare("SELECT id FROM cloudflare_accounts WHERE user_id = ?");
+        $stmt->execute([$userId]);
+        return $stmt->fetchAll(PDO::FETCH_COLUMN);
+    }
+}
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -83,8 +100,8 @@ function applySmartWafRules($pdo, $userId, $scope, $rules) {
                 'filter' => ['expression' => $expression, 'paused' => false]
             ];
             
-            $res = cloudflareApiRequestDetailed($pdo, $domain['email'], $domain['api_key'], "zones/{$domain['zone_id']}/firewall/rules", 'POST', [$ruleData], $proxies, $userId);
-            if ($res['success']) $domainApplied++; else $errors[] = "Bad ASN: " . ($res['api_errors'][0]['message'] ?? 'Error');
+            $res = cfAddCustomRule($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], ['action' => $ruleData['action'], 'expression' => $ruleData['filter']['expression'], 'description' => $ruleData['description']], $proxies, $userId);
+            if ($res['success']) $domainApplied++; else $errors[] = "Bad ASN: " . ($res['error'] ?? 'Error');
         }
         
         // 2. Block High Risk Countries
@@ -97,8 +114,8 @@ function applySmartWafRules($pdo, $userId, $scope, $rules) {
                 'filter' => ['expression' => $expression, 'paused' => false]
             ];
             
-            $res = cloudflareApiRequestDetailed($pdo, $domain['email'], $domain['api_key'], "zones/{$domain['zone_id']}/firewall/rules", 'POST', [$ruleData], $proxies, $userId);
-            if ($res['success']) $domainApplied++; else $errors[] = "High Risk Countries: " . ($res['api_errors'][0]['message'] ?? 'Error');
+            $res = cfAddCustomRule($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], ['action' => $ruleData['action'], 'expression' => $ruleData['filter']['expression'], 'description' => $ruleData['description']], $proxies, $userId);
+            if ($res['success']) $domainApplied++; else $errors[] = "High Risk Countries: " . ($res['error'] ?? 'Error');
         }
         
         // 3. Challenge Unknown Bots
@@ -111,8 +128,8 @@ function applySmartWafRules($pdo, $userId, $scope, $rules) {
                 'filter' => ['expression' => $expression, 'paused' => false]
             ];
             
-            $res = cloudflareApiRequestDetailed($pdo, $domain['email'], $domain['api_key'], "zones/{$domain['zone_id']}/firewall/rules", 'POST', [$ruleData], $proxies, $userId);
-            if ($res['success']) $domainApplied++; else $errors[] = "Challenge Bots: " . ($res['api_errors'][0]['message'] ?? 'Error');
+            $res = cfAddCustomRule($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], ['action' => $ruleData['action'], 'expression' => $ruleData['filter']['expression'], 'description' => $ruleData['description']], $proxies, $userId);
+            if ($res['success']) $domainApplied++; else $errors[] = "Challenge Bots: " . ($res['error'] ?? 'Error');
         }
         
         // 4. Block WordPress Attacks
@@ -124,8 +141,8 @@ function applySmartWafRules($pdo, $userId, $scope, $rules) {
                 'filter' => ['expression' => $expression, 'paused' => false]
             ];
             
-            $res = cloudflareApiRequestDetailed($pdo, $domain['email'], $domain['api_key'], "zones/{$domain['zone_id']}/firewall/rules", 'POST', [$ruleData], $proxies, $userId);
-            if ($res['success']) $domainApplied++; else $errors[] = "WordPress: " . ($res['api_errors'][0]['message'] ?? 'Error');
+            $res = cfAddCustomRule($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], ['action' => $ruleData['action'], 'expression' => $ruleData['filter']['expression'], 'description' => $ruleData['description']], $proxies, $userId);
+            if ($res['success']) $domainApplied++; else $errors[] = "WordPress: " . ($res['error'] ?? 'Error');
         }
         
         // 5. Rate Limiting (через WAF rules, так как Rate Limiting API платный или ограничен)
@@ -141,8 +158,8 @@ function applySmartWafRules($pdo, $userId, $scope, $rules) {
                 'filter' => ['expression' => $expression, 'paused' => false]
             ];
             
-            $res = cloudflareApiRequestDetailed($pdo, $domain['email'], $domain['api_key'], "zones/{$domain['zone_id']}/firewall/rules", 'POST', [$ruleData], $proxies, $userId);
-            if ($res['success']) $domainApplied++; else $errors[] = "Rate Limit (Tools): " . ($res['api_errors'][0]['message'] ?? 'Error');
+            $res = cfAddCustomRule($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], ['action' => $ruleData['action'], 'expression' => $ruleData['filter']['expression'], 'description' => $ruleData['description']], $proxies, $userId);
+            if ($res['success']) $domainApplied++; else $errors[] = "Rate Limit (Tools): " . ($res['error'] ?? 'Error');
         }
         
         if ($domainApplied > 0) {
