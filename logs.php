@@ -37,26 +37,33 @@ $stmt = $pdo->prepare("
 $stmt->execute(array_merge($params, [$perPage, $offset]));
 $logs = $stmt->fetchAll();
 
-// Action type colors
-$actionColors = [
-    'Login' => 'success',
-    'Logout' => 'secondary',
-    'Domain' => 'primary',
-    'DNS' => 'info',
-    'SSL' => 'warning',
-    'Security' => 'danger',
-    'Worker' => 'dark',
-    'Cache' => 'info',
-    'Error' => 'danger',
-    'API' => 'primary'
-];
-
+// Цвет бейджа по СМЫСЛУ результата (приоритет — над тематическими ключами):
+//   success (зелёный)  — успешно применено/создано/завершено
+//   danger  (красный)  — ошибка/провал
+//   warning (жёлтый)   — промежуточное: начато/в очереди/в процессе
+//   secondary (серый)  — пропущено/нейтрально/неизвестно
 function getActionColor($action) {
-    global $actionColors;
-    foreach ($actionColors as $key => $color) {
-        if (stripos($action, $key) !== false) {
-            return $color;
-        }
+    $a = mb_strtolower($action);
+    // 1) Провалы — красный (проверяем первым, чтобы "Apply Failed" не стал зелёным)
+    foreach (['fail', 'error', 'ошибк', 'denied', 'invalid', '429', 'не приме', 'не удал'] as $k) {
+        if (mb_strpos($a, $k) !== false) return 'danger';
+    }
+    // 2) Промежуточное — жёлтый
+    foreach (['start', 'начат', 'pending', 'ожид', 'process', 'в процесс', 'queued', 'в очеред', 'retry', 'повтор'] as $k) {
+        if (mb_strpos($a, $k) !== false) return 'warning';
+    }
+    // 3) Пропущено/нейтрально — серый
+    foreach (['skip', 'пропущ', 'logout'] as $k) {
+        if (mb_strpos($a, $k) !== false) return 'secondary';
+    }
+    // 4) Успех — зелёный
+    foreach (['applied', 'примен', 'success', 'успеш', 'created', 'создан', 'updated', 'обновл', 'added', 'добавл', 'deleted', 'удал', 'completed', 'заверш', 'login', 'removed', 'отключ'] as $k) {
+        if (mb_strpos($a, $k) !== false) return 'success';
+    }
+    // 5) Тематические (если результат не распознан) — нейтральные акценты
+    $topic = ['dns' => 'info', 'ssl' => 'info', 'cache' => 'info', 'worker' => 'dark', 'domain' => 'primary', 'security' => 'primary', 'whois' => 'info'];
+    foreach ($topic as $key => $color) {
+        if (mb_strpos($a, $key) !== false) return $color;
     }
     return 'secondary';
 }

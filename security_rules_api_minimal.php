@@ -490,10 +490,15 @@ function applyOnlyGoogle($pdo, $userId, $data) {
         if ($res['success']) {
             $applied++;
             saveSecurityRule($pdo, $userId, $domainId, 'only_google', json_encode(['rules' => 2]));
-            logAction($pdo, $userId, 'Only Google Applied', "Domain: {$domain['domain']}, zone: {$domain['zone_id']}, rules: " . count($rules));
+            $keptCount = count($middle);
+            $detail = "Домен: {$domain['domain']} — применено 2 правила: "
+                    . "«Allow Google Bot» (skip — пропускает Googlebot мимо WAF) + "
+                    . "«Block all other» (block — блокирует весь остальной трафик). "
+                    . "Существующих правил сохранено: {$keptCount}. Zone: {$domain['zone_id']}";
+            logAction($pdo, $userId, 'Only Google Applied', $detail);
         } else {
             $errors[] = $domain['domain'] . ': ' . $res['error'];
-            logAction($pdo, $userId, 'Only Google FAILED', "Domain: {$domain['domain']}, zone: {$domain['zone_id']}, error: {$res['error']}");
+            logAction($pdo, $userId, 'Only Google FAILED', "Домен: {$domain['domain']} — НЕ применено. Ошибка: {$res['error']}. Zone: {$domain['zone_id']}");
         }
     }
 

@@ -9,10 +9,18 @@ function hcount($pdo, $userId, $where, $params = []) {
     return (int)$stmt->fetchColumn();
 }
 
-$total    = hcount($pdo, $userId, '');
-$online   = hcount($pdo, $userId, "domain_status = 'online'");
-$offline  = hcount($pdo, $userId, "domain_status = 'offline'");
-$unknown  = hcount($pdo, $userId, "(domain_status IS NULL OR domain_status NOT IN ('online','offline'))");
+// Категории по СМЫСЛУ (приоритет — http_code):
+//   online    — 2xx/3xx, сайт отвечает
+//   protected — 401/403/429/503: сайт РАБОТАЕТ, но закрыт бот-защитой/«Только Google»
+//               (для не-Googlebot проверяльщика это ожидаемо, НЕ offline)
+//   offline   — реально недоступен (0/иные коды), не из-за защиты
+//   unknown   — ещё не проверялся
+$protectedCond = "http_code IN (401,403,429,503)";
+$total     = hcount($pdo, $userId, '');
+$online    = hcount($pdo, $userId, "domain_status = 'online' AND ($protectedCond) = 0");
+$protected = hcount($pdo, $userId, $protectedCond);
+$offline   = hcount($pdo, $userId, "domain_status IN ('offline','error') AND NOT ($protectedCond)");
+$unknown   = hcount($pdo, $userId, "domain_status IS NULL AND http_code IS NULL");
 $sslActive= hcount($pdo, $userId, "ssl_has_active = 1");
 $sslSoon  = hcount($pdo, $userId, "ssl_expires_soon = 1");
 $sslNone  = hcount($pdo, $userId, "(ssl_has_active IS NULL OR ssl_has_active = 0)");
@@ -23,10 +31,15 @@ $qStmt->execute([$userId]);
 $queue = [];
 foreach ($qStmt as $r) $queue[$r['status']] = (int)$r['c'];
 
-// Оффлайн-домены (список)
-$offStmt = $pdo->prepare("SELECT domain, http_code, last_check FROM cloudflare_accounts WHERE user_id = ? AND domain_status = 'offline' ORDER BY last_check DESC LIMIT 50");
+// Оффлайн-домены (реально недоступные, БЕЗ защищённых 401/403/429/503)
+$offStmt = $pdo->prepare("SELECT domain, http_code, last_check FROM cloudflare_accounts WHERE user_id = ? AND domain_status IN ('offline','error') AND NOT ($protectedCond) ORDER BY last_check DESC LIMIT 50");
 $offStmt->execute([$userId]);
 $offlineList = $offStmt->fetchAll();
+
+// Защищённые домены (401/403/429/503) — работают, но закрыты бот-защитой/«Только Google»
+$protStmt = $pdo->prepare("SELECT domain, http_code, last_check FROM cloudflare_accounts WHERE user_id = ? AND ($protectedCond) ORDER BY last_check DESC LIMIT 50");
+$protStmt->execute([$userId]);
+$protectedList = $protStmt->fetchAll();
 
 // SSL истекает скоро
 $soonStmt = $pdo->prepare("SELECT domain, ssl_nearest_expiry FROM cloudflare_accounts WHERE user_id = ? AND ssl_expires_soon = 1 ORDER BY ssl_nearest_expiry ASC LIMIT 50");
@@ -50,10 +63,11 @@ include 'sidebar.php';
     </div>
 
     <div class="row g-3 mb-4">
-        <div class="col-md-3"><div class="card text-white" style="background:#4f46e5"><div class="card-body"><h3><?php echo $total; ?></h3><div>Всего доменов</div></div></div></div>
-        <div class="col-md-3"><div class="card text-white bg-success"><div class="card-body"><h3><?php echo $online; ?></h3><div>Online</div></div></div></div>
-        <div class="col-md-3"><div class="card text-white bg-danger"><div class="card-body"><h3><?php echo $offline; ?></h3><div>Offline</div></div></div></div>
-        <div class="col-md-3"><div class="card text-white bg-secondary"><div class="card-body"><h3><?php echo $unknown; ?></h3><div>Не проверено</div></div></div></div>
+        <div class="col"><div class="card text-white" style="background:#4f46e5"><div class="card-body"><h3><?php echo $total; ?></h3><div>Всего доменов</div></div></div></div>
+        <div class="col"><div class="card text-white bg-success"><div class="card-body"><h3><?php echo $online; ?></h3><div>Online</div></div></div></div>
+        <div class="col"><div class="card text-white bg-warning"><div class="card-body"><h3><?php echo $protected; ?></h3><div>Защищён <small>(бот-защита)</small></div></div></div></div>
+        <div class="col"><div class="card text-white bg-danger"><div class="card-body"><h3><?php echo $offline; ?></h3><div>Offline</div></div></div></div>
+        <div class="col"><div class="card text-white bg-secondary"><div class="card-body"><h3><?php echo $unknown; ?></h3><div>Не проверено</div></div></div></div>
     </div>
 
     <div class="row g-3 mb-4">
@@ -64,7 +78,7 @@ include 'sidebar.php';
     </div>
 
     <div class="row g-3">
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card h-100">
                 <div class="card-header text-danger"><i class="fas fa-circle-xmark me-2"></i>Offline (<?php echo count($offlineList); ?>)</div>
                 <div class="card-body p-0" style="max-height:340px;overflow-y:auto;">
@@ -78,7 +92,22 @@ include 'sidebar.php';
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
+            <div class="card h-100">
+                <div class="card-header text-warning"><i class="fas fa-shield-halved me-2"></i>Защищён (<?php echo count($protectedList); ?>)</div>
+                <div class="card-body p-0" style="max-height:340px;overflow-y:auto;">
+                    <?php if (!$protectedList): ?><div class="p-3 text-muted">Нет</div><?php else: ?>
+                    <ul class="list-group list-group-flush">
+                        <?php foreach ($protectedList as $d): ?>
+                            <li class="list-group-item d-flex justify-content-between"><span><?php echo htmlspecialchars($d['domain']); ?></span><span class="badge bg-warning text-dark">HTTP <?php echo $d['http_code'] ?: '-'; ?></span></li>
+                        <?php endforeach; ?>
+                    </ul>
+                    <?php endif; ?>
+                </div>
+                <div class="card-footer small text-muted">Работают, но закрыты бот-защитой / «Только Google» — для не-Googlebot это норма.</div>
+            </div>
+        </div>
+        <div class="col-md-3">
             <div class="card h-100">
                 <div class="card-header text-warning"><i class="fas fa-clock me-2"></i>SSL истекает (<?php echo count($soonList); ?>)</div>
                 <div class="card-body p-0" style="max-height:340px;overflow-y:auto;">
@@ -92,7 +121,7 @@ include 'sidebar.php';
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card h-100">
                 <div class="card-header text-secondary"><i class="fas fa-triangle-exclamation me-2"></i>Недавние ошибки</div>
                 <div class="card-body p-0" style="max-height:340px;overflow-y:auto;">
