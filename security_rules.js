@@ -440,9 +440,11 @@ function applyOnlyGoogle() {
     const out = document.getElementById('onlyGoogleResult');
     if (out) out.innerHTML = '<div class="alert alert-info py-2 mb-0"><i class="fas fa-spinner fa-spin me-1"></i>Применяем…</div>';
     showLoading('Применение правил «Только Google»...');
-    $.post('security_rules_api_minimal.php', {
-        action: 'apply_only_google',
-        scope: scope
+    $.ajax({
+        url: 'security_rules_api_minimal.php',
+        method: 'POST',
+        data: { action: 'apply_only_google', scope: scope },
+        timeout: 60000
     })
     .done(function(response) {
         hideLoading();
@@ -454,9 +456,10 @@ function applyOnlyGoogle() {
             if (out) out.innerHTML = `<div class="alert alert-danger py-2 mb-0"><i class="fas fa-circle-xmark me-1"></i><strong>Не применено:</strong> ${response.error || 'неизвестная ошибка'}</div>`;
         }
     })
-    .fail(function(xhr) {
+    .fail(function(xhr, textStatus) {
         hideLoading();
-        const msg = (xhr.responseJSON && xhr.responseJSON.error) || 'Ошибка соединения с сервером';
+        let msg = (xhr.responseJSON && xhr.responseJSON.error) || 'Ошибка соединения с сервером';
+        if (textStatus === 'timeout') msg = 'Превышено время ожидания (60с). Cloudflare не ответил — проверьте токен/прокси аккаунта. Смотрите Логи (запись «Only Google Started»).';
         showError(msg);
         if (out) out.innerHTML = `<div class="alert alert-danger py-2 mb-0"><i class="fas fa-circle-xmark me-1"></i>${msg}</div>`;
     });

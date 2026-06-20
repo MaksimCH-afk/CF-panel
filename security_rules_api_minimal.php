@@ -434,6 +434,8 @@ function applyOnlyGoogle($pdo, $userId, $data) {
     if (empty($domainIds)) {
         return ['success' => false, 'error' => 'Нет доменов для применения'];
     }
+    // Пишем «Started» ДО обращения к Cloudflare — чтобы в логах было видно, что запрос дошёл.
+    logAction($pdo, $userId, 'Only Google Started', 'domains: ' . count($domainIds));
 
     $allowRule = [
         'action' => 'skip',
@@ -465,13 +467,14 @@ function applyOnlyGoogle($pdo, $userId, $data) {
 
         // Текущие правила БЕЗ любых Google-only правил (распознаём по смыслу, не по названию),
         // чтобы при повторном применении / поверх ручных правил получилось ровно 2, а не 4.
-        $current = cfGetCustomRuleset($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], $proxies, $userId);
+        // userId=null: внутренние вызовы к CF не пишут логи (меньше конкуренции за БД при апплае)
+        $current = cfGetCustomRuleset($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], $proxies, null);
         if ($current['error']) { $errors[] = $domain['domain'] . ': ' . $current['error']; continue; }
         $middle = array_values(array_filter($current['rules'], 'isNotGoogleOnlyRule'));
 
         // Порядок: skip Google -> существующие -> block all
         $rules = array_merge([$allowRule], $middle, [$blockRule]);
-        $res = cfSetCustomRules($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], $rules, $proxies, $userId);
+        $res = cfSetCustomRules($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], $rules, $proxies, null);
 
         if ($res['success']) {
             $applied++;
