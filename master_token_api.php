@@ -28,9 +28,11 @@ function masterTokenPreset() {
         ['key' => 'zone_waf',         'label' => 'Zone WAF (Edit)',             'cf' => 'Zone WAF Write',             'level' => 'zone'],
         ['key' => 'analytics',        'label' => 'Analytics (Read)',            'cf' => 'Analytics Read',             'level' => 'zone'],
         // У Single Redirect имя группы в CF отличается от UI-метки. Несколько кандидатов
-        // + fuzzy-поиск (все ключевые слова должны встретиться в имени группы).
+        // + fuzzy-поиск (имя должно содержать оба слова: 'redirect' и 'write').
+        // ВАЖНО: НЕ матчим 'Transform Rules Write' — она не грантится на ресурс «все зоны»
+        // и роняет создание всего токена.
         ['key' => 'single_redirect',  'label' => 'Single Redirect (Edit)',
-         'cf' => ['Single Redirect Write', 'Dynamic URL Redirect Write', 'Dynamic Redirect Write', 'Transform Rules Write'],
+         'cf' => ['Single Redirect Write', 'Dynamic URL Redirect Write', 'Dynamic Redirects Write', 'Dynamic Redirect Write'],
          'match' => ['redirect', 'write'], 'level' => 'zone'],
     ];
 }
@@ -126,6 +128,7 @@ try {
             // 3) Создаём токен
             $res = cfMasterApi($master, 'POST', 'user/tokens', ['name' => $name, 'policies' => $policies]);
             if (empty($res['success'])) {
+                logAction($pdo, $userId, 'Master Token: ошибка создания', cfErr($res) . " | права: " . implode(',', $selected));
                 throw new Exception('Cloudflare отклонил создание токена: ' . cfErr($res));
             }
 
@@ -137,6 +140,27 @@ try {
                 'name'    => $name,
                 'missing' => $missing,
             ]);
+            break;
+
+        case 'list_groups':
+            // DEBUG: показать группы прав, относящиеся к редиректам/трансформам —
+            // чтобы найти точное имя группы Single Redirect в этом аккаунте.
+            $master = trim($_POST['master_token'] ?? '');
+            if ($master === '') throw new Exception('Укажите мастер-токен');
+            $pg = cfMasterApi($master, 'GET', 'user/tokens/permission_groups');
+            if (empty($pg['success'])) throw new Exception('Не удалось получить группы: ' . cfErr($pg));
+            $kw = ['redirect', 'transform', 'url', 'single', 'rule'];
+            $found = [];
+            foreach ($pg['result'] as $g) {
+                $n = mb_strtolower($g['name']);
+                foreach ($kw as $k) {
+                    if (mb_strpos($n, $k) !== false) {
+                        $found[] = ['name' => $g['name'], 'scopes' => $g['scopes'] ?? []];
+                        break;
+                    }
+                }
+            }
+            echo json_encode(['success' => true, 'total' => count($pg['result']), 'matched' => $found]);
             break;
 
         case 'list_tokens':
