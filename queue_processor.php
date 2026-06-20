@@ -81,7 +81,29 @@ class QueueProcessor {
             }
             
             $executionTime = round(microtime(true) - $startTime, 2);
-            
+
+            // D) Telegram: сбои задач + завершение «массовой операции» (очередь опустела)
+            try {
+                if (function_exists('tgAlertOn') && tgAlertOn($this->pdo, 'queue')) {
+                    $failed = array_filter($results, function ($r) { return ($r['status'] ?? '') === 'failed'; });
+                    if ($failed) {
+                        $lines = [];
+                        foreach ($failed as $f) {
+                            $lines[] = "   • #" . ($f['task_id'] ?? '?') . ' ' . ($f['type'] ?? '') . ': ' . mb_substr($f['error'] ?? 'ошибка', 0, 120);
+                        }
+                        tgSendMessage($this->pdo, "🟠 <b>Очередь: сбои задач (" . count($failed) . ")</b>\n" . implode("\n", $lines));
+                    }
+                    $pending = (int)$this->pdo->query("SELECT COUNT(*) FROM queue WHERE status = 'pending'")->fetchColumn();
+                    $prev = (int) appGetSetting($this->pdo, 'queue_prev_pending', '0');
+                    if ($prev > 0 && $pending === 0) {
+                        $okc  = (int)$this->pdo->query("SELECT COUNT(*) FROM queue WHERE status='completed' AND completed_at >= datetime('now','-1 hour')")->fetchColumn();
+                        $errc = (int)$this->pdo->query("SELECT COUNT(*) FROM queue WHERE status='failed' AND completed_at >= datetime('now','-1 hour')")->fetchColumn();
+                        tgSendMessage($this->pdo, "✅ <b>Очередь обработана.</b> За последний час: выполнено {$okc}, ошибок {$errc}.");
+                    }
+                    appSetSetting($this->pdo, 'queue_prev_pending', $pending);
+                }
+            } catch (Exception $e) { /* алерты не должны ронять очередь */ }
+
             return [
                 'success' => true,
                 'processed' => $processed,

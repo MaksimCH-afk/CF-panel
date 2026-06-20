@@ -23,12 +23,42 @@ include 'sidebar.php';
                         <label class="form-label">Chat ID</label>
                         <input type="text" id="chatId" class="form-control" placeholder="напр. 123456789 или -1001234567890 (канал/группа)">
                     </div>
-                    <div class="d-flex gap-2">
+                    <hr>
+                    <label class="form-label fw-bold">Категории оповещений</label>
+                    <div class="row">
+                        <div class="col-6">
+                            <div class="form-check form-switch"><input class="form-check-input alert-cb" type="checkbox" id="alert_offline"><label class="form-check-label small" for="alert_offline">Домен offline/online</label></div>
+                            <div class="form-check form-switch"><input class="form-check-input alert-cb" type="checkbox" id="alert_expiry"><label class="form-check-label small" for="alert_expiry">Сроки WHOIS/SSL (дайджест)</label></div>
+                            <div class="form-check form-switch"><input class="form-check-input alert-cb" type="checkbox" id="alert_ns"><label class="form-check-label small" for="alert_ns">Смена NS</label></div>
+                            <div class="form-check form-switch"><input class="form-check-input alert-cb" type="checkbox" id="alert_ip"><label class="form-check-label small" for="alert_ip">Смена origin IP</label></div>
+                        </div>
+                        <div class="col-6">
+                            <div class="form-check form-switch"><input class="form-check-input alert-cb" type="checkbox" id="alert_token"><label class="form-check-label small" for="alert_token">Токен перестал работать</label></div>
+                            <div class="form-check form-switch"><input class="form-check-input alert-cb" type="checkbox" id="alert_zone"><label class="form-check-label small" for="alert_zone">Зона не active</label></div>
+                            <div class="form-check form-switch"><input class="form-check-input alert-cb" type="checkbox" id="alert_queue"><label class="form-check-label small" for="alert_queue">Очередь: сбои/готово</label></div>
+                        </div>
+                    </div>
+
+                    <hr>
+                    <label class="form-label fw-bold">Мониторинг</label>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6">
+                            <label class="form-label small mb-1">Перепроверять домен раз в (часов)</label>
+                            <input type="number" id="intervalHours" class="form-control form-control-sm" min="0.25" step="0.25" value="12">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small mb-1">Доменов за один проход</label>
+                            <input type="number" id="batch" class="form-control form-control-sm" min="1" max="50" value="8">
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2 flex-wrap">
                         <button class="btn btn-primary" onclick="saveTg()"><i class="fas fa-save me-1"></i>Сохранить</button>
                         <button class="btn btn-outline-secondary" onclick="testTg()"><i class="fas fa-paper-plane me-1"></i>Отправить тест</button>
+                        <button class="btn btn-outline-success" onclick="runMonitor()"><i class="fas fa-satellite-dish me-1"></i>Проверить сейчас</button>
                     </div>
                     <div class="alert alert-secondary small mt-3 mb-0">
-                        <strong>Триггеры пока не подключены</strong> — это только инфраструктура (бот + тест). Куда вешать оповещения, обсудим отдельно.
+                        Мониторинг работает в фоне сам (каждые ~2 мин обрабатывает батч). «Проверить сейчас» прогоняет один проход вручную. Алерты шлются только при <strong>изменениях</strong>; сроки — раз в сутки дайджестом.
                     </div>
                 </div>
             </div>
@@ -48,18 +78,32 @@ include 'sidebar.php';
 
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script>
+const ALERT_KEYS = ['offline','expiry','ns','ip','token','zone','queue'];
 function loadTg() {
     $.get('telegram_api.php', { action: 'get' }, function(r) {
         if (!r.success) return;
         $('#tokenState').text(r.has_token ? ('Токен сохранён: ' + r.bot_token_masked) : 'Токен не задан');
         $('#chatId').val(r.chat_id || '');
+        ALERT_KEYS.forEach(function(k){ $('#alert_'+k).prop('checked', !!(r.alerts && r.alerts[k])); });
+        $('#intervalHours').val(r.interval_hours || '12');
+        $('#batch').val(r.batch || '8');
     }, 'json');
 }
 function saveTg() {
-    $.post('telegram_api.php', { action: 'save', bot_token: $('#botToken').val().trim(), chat_id: $('#chatId').val().trim() }, function(r) {
+    const data = { action: 'save', bot_token: $('#botToken').val().trim(), chat_id: $('#chatId').val().trim(),
+        interval_hours: $('#intervalHours').val(), batch: $('#batch').val() };
+    ALERT_KEYS.forEach(function(k){ data['alert_'+k] = $('#alert_'+k).is(':checked') ? '1' : '0'; });
+    $.post('telegram_api.php', data, function(r) {
         if (r.success) { showToast('Сохранено', 'success'); $('#botToken').val(''); loadTg(); }
         else showToast('Ошибка: ' + (r.error || ''), 'error');
     }, 'json');
+}
+function runMonitor() {
+    showToast('Запускаю проход мониторинга…', 'info');
+    $.get('monitor.php', { auth_token: 'cloudflare_queue_processor_2024' }, function(r) {
+        if (r && r.ok) showToast('Проверено доменов: ' + r.checked + ', алертов: ' + r.alerts, 'success');
+        else showToast('Готово', 'success');
+    }, 'json').fail(function(){ showToast('Ошибка запуска мониторинга', 'error'); });
 }
 function testTg() {
     $.post('telegram_api.php', { action: 'test', bot_token: $('#botToken').val().trim(), chat_id: $('#chatId').val().trim() }, function(r) {

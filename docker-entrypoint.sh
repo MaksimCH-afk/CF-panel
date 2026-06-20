@@ -26,5 +26,17 @@ fi
   done
 ) &
 
+# Фоновый мониторинг доменов (статус/NS/IP/SSL/WHOIS) + Telegram-алерты.
+# Сам троттлит по last_monitor; здесь просто периодически дёргаем батч.
+(
+  sleep 25
+  while true; do
+    curl -s -A "QueueProcessor" --max-time 110 \
+      "http://127.0.0.1:1000/monitor.php?auth_token=cloudflare_queue_processor_2024" \
+      >/dev/null 2>&1 || true
+    sleep 120
+  done
+) &
+
 # Основной процесс — Apache на переднем плане
 exec apache2-foreground

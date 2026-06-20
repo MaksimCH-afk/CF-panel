@@ -50,6 +50,51 @@ function tgSendMessage($pdo, $text, $chatId = null) {
     return ['ok' => false, 'error' => $resp['description'] ?? 'ошибка Telegram API'];
 }
 
+/** Универсальные настройки панели (app_settings key-value). */
+function appGetSetting($pdo, $key, $default = '') {
+    try {
+        $st = $pdo->prepare("SELECT value FROM app_settings WHERE key = ?");
+        $st->execute([$key]);
+        $v = $st->fetchColumn();
+        return $v === false ? $default : $v;
+    } catch (Exception $e) { return $default; }
+}
+function appSetSetting($pdo, $key, $value) {
+    try {
+        $pdo->prepare("INSERT INTO app_settings (key, value) VALUES (?, ?)
+                       ON CONFLICT(key) DO UPDATE SET value = excluded.value")->execute([$key, (string)$value]);
+    } catch (Exception $e) { /* ignore */ }
+}
+/** Включена ли категория алертов (по умолчанию ВКЛ). Ключи: offline, expiry, ns, ip, token, zone, queue. */
+function tgAlertOn($pdo, $key) {
+    return appGetSetting($pdo, 'tg_alert_' . $key, '1') === '1';
+}
+
+/** Нормализует список NS (JSON-массив или строка) в отсортированную строку нижним регистром. */
+function tgNormalizeNs($raw) {
+    if (empty($raw)) return '';
+    $arr = json_decode($raw, true);
+    if (!is_array($arr)) $arr = preg_split('/[\s,]+/', $raw);
+    $arr = array_filter(array_map(function ($n) { return strtolower(trim(rtrim((string)$n, '.'))); }, $arr));
+    sort($arr);
+    return implode(', ', $arr);
+}
+/** Все ли NS принадлежат Cloudflare (*.ns.cloudflare.com). */
+function tgAllCloudflareNs($nsCsv) {
+    if ($nsCsv === '') return true;
+    foreach (explode(', ', $nsCsv) as $ns) {
+        if (strpos($ns, '.ns.cloudflare.com') === false) return false;
+    }
+    return true;
+}
+/** Классификация HTTP-кода: online / protected (бот-защита) / offline. */
+function tgClassifyStatus($code) {
+    $code = (int)$code;
+    if ($code >= 200 && $code < 400) return 'online';
+    if (in_array($code, [401, 403, 429, 503], true)) return 'protected';
+    return 'offline';
+}
+
 function getRandomProxy($proxies) {
     return $proxies ? $proxies[array_rand($proxies)] : null;
 }

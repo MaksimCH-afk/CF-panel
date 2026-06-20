@@ -6,7 +6,8 @@ $_isApiEndpoint = (
     isset($_SERVER['REQUEST_URI']) &&
     (strpos($_SERVER['REQUEST_URI'], '_api.php') !== false ||
      strpos($_SERVER['REQUEST_URI'], 'security_rules_api_minimal.php') !== false ||
-     strpos($_SERVER['REQUEST_URI'], 'queue_processor.php') !== false)
+     strpos($_SERVER['REQUEST_URI'], 'queue_processor.php') !== false ||
+     strpos($_SERVER['REQUEST_URI'], 'monitor.php') !== false)
 );
 
 // Класс BotProtection нужен (header.php шлёт его HTTP-заголовки), но БЛОКИРОВКА
@@ -25,8 +26,8 @@ define('BASE_PATH', $basePath);
 define('ROOT_PATH', dirname(__FILE__) . '/');
 define('DB_PATH', ROOT_PATH . 'cloudflare_panel.db');
 
-// Версия панели (счётчик). Текущая — 17.0, следующие правки: 18.0, 19.0, ...
-define('PANEL_VERSION', '17.0');
+// Версия панели (счётчик). Текущая — 18.0, следующие правки: 19.0, 20.0, ...
+define('PANEL_VERSION', '18.0');
 
 // Перенаправление на HTTPS, если соединение не защищено (исключая localhost, CLI и API файлы)
 if (php_sapi_name() !== 'cli') {
@@ -328,7 +329,7 @@ try {
     }
     // WHOIS/RDAP доп. поля (DNSSEC, abuse-контакт, источник данных) — глобально,
     // чтобы whois_api.php работал и без предварительного захода на страницу WHOIS.
-    foreach (['whois_dnssec TEXT', 'whois_abuse TEXT', 'whois_source TEXT'] as $col) {
+    foreach (['whois_dnssec TEXT', 'whois_abuse TEXT', 'whois_source TEXT', 'last_monitor DATETIME'] as $col) {
         try { $pdo->exec("ALTER TABLE cloudflare_accounts ADD COLUMN $col DEFAULT NULL"); } catch (Exception $e) {}
     }
     // Глобальные настройки панели (key-value): Telegram bot_token/chat_id и т.п.
