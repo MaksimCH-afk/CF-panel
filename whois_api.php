@@ -96,17 +96,24 @@ function checkDomainWhois($pdo, $userId, $domainId) {
     
     $domain = $domainRow['domain'];
     
-    // Get WHOIS data
+    // 1) Сначала классический WHOIS (порт 43)
     $whoisData = fetchWhoisData($domain);
-    
-    if (!$whoisData['success']) {
-        logAction($pdo, $userId, "WHOIS Check Failed", "Domain: {$domain}, Error: {$whoisData['error']}");
-        return [
-            'success' => false, 
-            'error' => $whoisData['error'], 
-            'domain_id' => $domainId,
-            'domain' => $domain
-        ];
+    $source = 'whois';
+
+    // 2) RDAP — ТОЛЬКО как fallback, если WHOIS не дал полезного (нет даты и регистратора).
+    //    Не заменяем WHOIS, а дополняем, когда по нему данных нет.
+    $whoisUseful = !empty($whoisData['success']) && (!empty($whoisData['expiry_date']) || !empty($whoisData['registrar']));
+    if (!$whoisUseful) {
+        $rdap = fetchRdapData($domain);
+        if (!empty($rdap['success'])) {
+            $whoisData = $rdap;
+            $source = 'rdap';
+        } elseif (empty($whoisData['success'])) {
+            // Оба источника не дали данных
+            $err = ($whoisData['error'] ?? 'нет данных') . '; RDAP: ' . ($rdap['error'] ?? 'нет данных');
+            logAction($pdo, $userId, "WHOIS Check Failed", "Domain: {$domain}, Error: {$err}");
+            return ['success' => false, 'error' => $err, 'domain_id' => $domainId, 'domain' => $domain];
+        }
     }
     
     // Calculate days until expiry
@@ -120,7 +127,7 @@ function checkDomainWhois($pdo, $userId, $domainId) {
     
     // Update database
     $stmt = $pdo->prepare("
-        UPDATE cloudflare_accounts 
+        UPDATE cloudflare_accounts
         SET whois_registrar = ?,
             whois_created_date = ?,
             whois_expiry_date = ?,
@@ -128,11 +135,14 @@ function checkDomainWhois($pdo, $userId, $domainId) {
             whois_registrant = ?,
             whois_name_servers = ?,
             whois_status = ?,
+            whois_dnssec = ?,
+            whois_abuse = ?,
+            whois_source = ?,
             whois_last_check = datetime('now'),
             whois_days_until_expiry = ?
         WHERE id = ?
     ");
-    
+
     $stmt->execute([
         $whoisData['registrar'] ?? null,
         $whoisData['created_date'] ?? null,
@@ -141,16 +151,20 @@ function checkDomainWhois($pdo, $userId, $domainId) {
         $whoisData['registrant'] ?? null,
         !empty($whoisData['name_servers']) ? json_encode($whoisData['name_servers']) : null,
         $whoisData['status'] ?? null,
+        $whoisData['dnssec'] ?? null,
+        $whoisData['abuse'] ?? null,
+        $source,
         $daysUntilExpiry,
         $domainId
     ]);
-    
-    logAction($pdo, $userId, "WHOIS Check Success", "Domain: {$domain}, Expiry: {$whoisData['expiry_date']}, Days: {$daysUntilExpiry}");
-    
+
+    logAction($pdo, $userId, "WHOIS Check Success", "Domain: {$domain}, Источник: " . strtoupper($source) . ", Expiry: {$whoisData['expiry_date']}, Days: {$daysUntilExpiry}");
+
     return [
         'success' => true,
         'domain_id' => $domainId,
         'domain' => $domain,
+        'source' => $source,
         'registrar' => $whoisData['registrar'] ?? null,
         'created_date' => $whoisData['created_date'] ?? null,
         'expiry_date' => $whoisData['expiry_date'] ?? null,
@@ -158,6 +172,8 @@ function checkDomainWhois($pdo, $userId, $domainId) {
         'registrant' => $whoisData['registrant'] ?? null,
         'name_servers' => $whoisData['name_servers'] ?? [],
         'status' => $whoisData['status'] ?? null,
+        'dnssec' => $whoisData['dnssec'] ?? null,
+        'abuse' => $whoisData['abuse'] ?? null,
         'days_until_expiry' => $daysUntilExpiry,
         'raw_data' => $whoisData['raw'] ?? null
     ];
@@ -406,6 +422,95 @@ function fetchWhoisData($domain) {
 /**
  * Parse WHOIS response data
  */
+/**
+ * RDAP — современная замена WHOIS (HTTPS/JSON). Используется ТОЛЬКО как fallback,
+ * когда классический WHOIS (порт 43) не дал полезных данных. Через rdap.org —
+ * бутстрап-редиректор к авторитетному RDAP-серверу нужной зоны (нужен follow редиректов).
+ * Возвращает тот же формат, что fetchWhoisData, плюс dnssec/abuse.
+ */
+function fetchRdapData($domain) {
+    $parts = explode('.', $domain);
+    if (count($parts) < 2) return ['success' => false, 'error' => 'Некорректное имя домена'];
+    $rootDomain = implode('.', array_slice($parts, -2));
+
+    $ch = curl_init("https://rdap.org/domain/" . urlencode($rootDomain));
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,   // rdap.org отдаёт 302 на авторитетный сервер
+        CURLOPT_MAXREDIRS => 5,
+        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 8,
+        CURLOPT_HTTPHEADER => ['Accept: application/rdap+json'],
+        CURLOPT_USERAGENT => 'CloudPanel-RDAP',
+    ]);
+    $body = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($body === false || $code >= 400) {
+        return ['success' => false, 'error' => "RDAP недоступен (HTTP $code)"];
+    }
+    $d = json_decode($body, true);
+    if (!is_array($d)) return ['success' => false, 'error' => 'RDAP: некорректный ответ'];
+
+    // Даты из events
+    $created = $expiry = $updated = null;
+    foreach ($d['events'] ?? [] as $ev) {
+        $when = $ev['eventDate'] ?? null;
+        switch ($ev['eventAction'] ?? '') {
+            case 'registration': $created = $when; break;
+            case 'expiration':   $expiry  = $when; break;
+            case 'last changed': $updated = $when; break;
+        }
+    }
+    // Хелпер: достать поле из vcardArray
+    $vcardGet = function($entity, $field) {
+        foreach (($entity['vcardArray'][1] ?? []) as $item) {
+            if (($item[0] ?? '') === $field) return $item[3] ?? null;
+        }
+        return null;
+    };
+    // Регистратор + abuse-контакт (вложенная сущность с ролью abuse)
+    $registrar = null; $abuse = null;
+    foreach ($d['entities'] ?? [] as $ent) {
+        $roles = $ent['roles'] ?? [];
+        if (in_array('registrar', $roles, true)) {
+            $registrar = $vcardGet($ent, 'fn') ?: $registrar;
+            foreach ($ent['entities'] ?? [] as $sub) {
+                if (in_array('abuse', $sub['roles'] ?? [], true)) {
+                    $email = $vcardGet($sub, 'email');
+                    $tel   = $vcardGet($sub, 'tel');
+                    $abuse = trim(($email ?: '') . ($tel ? ' / ' . str_replace('tel:', '', $tel) : ''));
+                }
+            }
+        }
+    }
+    $nameServers = [];
+    foreach ($d['nameservers'] ?? [] as $ns) {
+        if (!empty($ns['ldhName'])) $nameServers[] = strtolower($ns['ldhName']);
+    }
+    $status = !empty($d['status']) ? implode(', ', (array)$d['status']) : null;
+    $dnssec = null;
+    if (isset($d['secureDNS']['delegationSigned'])) {
+        $dnssec = $d['secureDNS']['delegationSigned'] ? 'enabled' : 'disabled';
+    }
+
+    return [
+        'success'      => !empty($expiry) || !empty($registrar),
+        'registrar'    => $registrar,
+        'created_date' => $created,
+        'expiry_date'  => $expiry,
+        'updated_date' => $updated,
+        'registrant'   => null, // в RDAP почти всегда скрыт (redacted)
+        'name_servers' => $nameServers,
+        'status'       => $status,
+        'dnssec'       => $dnssec,
+        'abuse'        => $abuse ?: null,
+        'source'       => 'rdap',
+        'raw'          => $body,
+        'error'        => null,
+    ];
+}
+
 function parseWhoisData($raw, $tld) {
     $data = [
         'registrar' => null,

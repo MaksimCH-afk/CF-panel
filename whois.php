@@ -30,6 +30,15 @@ try {
     $pdo->exec("ALTER TABLE cloudflare_accounts ADD COLUMN whois_days_until_expiry INTEGER DEFAULT NULL");
 }
 
+// Доп. колонки для RDAP-данных (DNSSEC, abuse-контакт, источник whois/rdap)
+try {
+    $pdo->query("SELECT whois_source FROM cloudflare_accounts LIMIT 1");
+} catch (Exception $e) {
+    $pdo->exec("ALTER TABLE cloudflare_accounts ADD COLUMN whois_dnssec TEXT DEFAULT NULL");
+    $pdo->exec("ALTER TABLE cloudflare_accounts ADD COLUMN whois_abuse TEXT DEFAULT NULL");
+    $pdo->exec("ALTER TABLE cloudflare_accounts ADD COLUMN whois_source TEXT DEFAULT NULL");
+}
+
 // Get filter
 $filter = $_GET['filter'] ?? 'all';
 
@@ -100,6 +109,7 @@ $stmt = $pdo->prepare("
     SELECT ca.id, ca.domain, ca.whois_registrar, ca.whois_created_date, 
            ca.whois_expiry_date, ca.whois_updated_date, ca.whois_registrant,
            ca.whois_name_servers, ca.whois_status, ca.whois_last_check,
+           ca.whois_dnssec, ca.whois_abuse, ca.whois_source,
            ca.whois_days_until_expiry, g.name as group_name
     FROM cloudflare_accounts ca
     LEFT JOIN groups g ON ca.group_id = g.id
@@ -602,6 +612,9 @@ function showWhoisDetails(domainId) {
                     <tr><th>Регистратор</th><td>${domain.whois_registrar || '—'}</td></tr>
                     <tr><th>Владелец</th><td>${domain.whois_registrant || '—'}</td></tr>
                     <tr><th>Статус</th><td><code>${domain.whois_status || '—'}</code></td></tr>
+                    <tr><th>DNSSEC</th><td>${domain.whois_dnssec === 'enabled' ? '<span class="badge bg-success">включён</span>' : (domain.whois_dnssec === 'disabled' ? '<span class="badge bg-secondary">выключен</span>' : '—')}</td></tr>
+                    <tr><th>Abuse-контакт</th><td>${domain.whois_abuse ? '<code>'+domain.whois_abuse+'</code>' : '—'}</td></tr>
+                    <tr><th>Источник</th><td>${domain.whois_source === 'rdap' ? '<span class="badge bg-info">RDAP</span>' : '<span class="badge bg-secondary">WHOIS</span>'}</td></tr>
                 </table>
             </div>
             <div class="col-md-6">
