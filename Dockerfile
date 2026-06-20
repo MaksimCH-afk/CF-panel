@@ -14,6 +14,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Включаем mod_rewrite и mod_headers (нужны для .htaccess)
 RUN a2enmod rewrite headers
 
+# Apache слушает порт 1000 внутри контейнера (чтобы маппинг был ровно 1000:1000)
+RUN sed -i 's/Listen 80/Listen 1000/' /etc/apache2/ports.conf \
+    && sed -i 's/<VirtualHost \*:80>/<VirtualHost *:1000>/' /etc/apache2/sites-available/000-default.conf
+
 # Разрешаем .htaccess (AllowOverride All) в корне документов
 RUN printf '<Directory /var/www/html>\n\
     Options Indexes FollowSymLinks\n\
@@ -35,6 +39,6 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # Apache работает под www-data — даём ему права на запись (создание SQLite-БД, credentials.txt)
 RUN chown -R www-data:www-data /var/www/html
 
-EXPOSE 80
+EXPOSE 1000
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

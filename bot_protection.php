@@ -259,6 +259,7 @@ class BotProtection {
      * Main protection method
      */
     public static function protect(): void {
+        return; // ОТКЛЮЧЕНО: приватная single-user панель (блокировала владельца)
         // Get request URI
         $uri = $_SERVER['REQUEST_URI'] ?? '';
         $scriptName = basename($_SERVER['SCRIPT_NAME'] ?? '');
@@ -330,6 +331,7 @@ class BotProtection {
      * Check after session is started (for rate limiting)
      */
     public static function protectWithRateLimit(): void {
+        return; // ОТКЛЮЧЕНО: приватная single-user панель
         if (self::isSuspiciousRequest()) {
             self::block('Suspicious request pattern');
         }

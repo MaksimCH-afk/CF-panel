@@ -9,7 +9,9 @@ $_isApiEndpoint = (
      strpos($_SERVER['REQUEST_URI'], 'queue_processor.php') !== false)
 );
 
-// Bot and AI Crawler Protection - НЕ применяем для API endpoints
+// Класс BotProtection нужен (header.php шлёт его HTTP-заголовки), но БЛОКИРОВКА
+// отключена внутри самого класса (protect/protectWithRateLimit) — панель приватная,
+// single-user, без логина; эвристика блокировала самого владельца («Access Denied»).
 if (!$_isApiEndpoint) {
     require_once 'bot_protection.php';
 }
