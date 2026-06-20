@@ -413,6 +413,19 @@ function applyReferrerOnly($pdo, $userId, $data) {
     return ['success' => true, 'applied' => $applied, 'total' => count($domainIds)];
 }
 
+// Распознаёт «Google-only» правило по смыслу (skip с Googlebot в UA, либо block всего сайта).
+// Нужно, чтобы повторное применение/отмена работали независимо от названия правила.
+function isGoogleOnlyRule($r) {
+    $expr = $r['expression'] ?? '';
+    $act = $r['action'] ?? '';
+    $desc = $r['description'] ?? '';
+    if ($desc === 'Allow Google Bot' || $desc === 'Block all other') return true;
+    if ($act === 'skip' && stripos($expr, 'googlebot') !== false) return true;               // Allow Google Bot
+    if ($act === 'block' && strpos($expr, 'starts_with(http.request.uri') !== false) return true; // Block all other
+    return false;
+}
+function isNotGoogleOnlyRule($r) { return !isGoogleOnlyRule($r); }
+
 // «Только Google»: 2 WAF custom-правила (skip Googlebot первым + block all other последним).
 // Существующие правила сохраняются между ними. Повторное применение не дублирует.
 function applyOnlyGoogle($pdo, $userId, $data) {
@@ -450,13 +463,11 @@ function applyOnlyGoogle($pdo, $userId, $data) {
         if (!$domain) { $errors[] = "ID $domainId: домен не найден"; continue; }
         if (!$domain['zone_id']) { $errors[] = $domain['domain'] . ': нет zone_id (сначала синхронизируйте домен)'; continue; }
 
-        // Текущие правила без наших двух (чтобы не дублировать при повторном применении)
+        // Текущие правила БЕЗ любых Google-only правил (распознаём по смыслу, не по названию),
+        // чтобы при повторном применении / поверх ручных правил получилось ровно 2, а не 4.
         $current = cfGetCustomRuleset($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], $proxies, $userId);
         if ($current['error']) { $errors[] = $domain['domain'] . ': ' . $current['error']; continue; }
-        $middle = array_values(array_filter($current['rules'], function ($r) {
-            $d = $r['description'] ?? '';
-            return $d !== 'Allow Google Bot' && $d !== 'Block all other';
-        }));
+        $middle = array_values(array_filter($current['rules'], 'isNotGoogleOnlyRule'));
 
         // Порядок: skip Google -> существующие -> block all
         $rules = array_merge([$allowRule], $middle, [$blockRule]);
@@ -500,10 +511,7 @@ function removeOnlyGoogle($pdo, $userId, $data) {
 
         $current = cfGetCustomRuleset($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], $proxies, $userId);
         if ($current['error']) { $errors[] = $domain['domain'] . ': ' . $current['error']; continue; }
-        $kept = array_values(array_filter($current['rules'], function ($r) {
-            $d = $r['description'] ?? '';
-            return $d !== 'Allow Google Bot' && $d !== 'Block all other';
-        }));
+        $kept = array_values(array_filter($current['rules'], 'isNotGoogleOnlyRule'));
         if (count($kept) === count($current['rules'])) { $removed++; continue; } // нечего удалять
         $res = cfSetCustomRules($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], $kept, $proxies, $userId);
         if ($res['success']) {
