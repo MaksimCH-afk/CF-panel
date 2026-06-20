@@ -615,11 +615,30 @@ function getScopeDomains($pdo, $userId, $scope) {
 }
 
 function saveSecurityRule($pdo, $userId, $domainId, $ruleType, $ruleData) {
-    $stmt = $pdo->prepare("
-        INSERT INTO security_rules (user_id, domain_id, rule_type, rule_data, created_at)
-        VALUES (?, ?, ?, ?, datetime('now'))
-    ");
-    return $stmt->execute([$userId, $domainId, $ruleType, $ruleData]);
+    // Запись в security_rules — НЕкритичная (CF-правило уже применено к моменту вызова).
+    // Под нагрузкой SQLite может вернуть "database is locked", если параллельный запрос
+    // (probe прав / очередь / health) держит write-лок. Раньше это исключение всплывало
+    // как HTTP 500, и пользователь видел ошибку/вечный спиннер, хотя правило уже стояло.
+    // Поэтому: несколько ретраев, и при стойкой блокировке — тихо пропускаем (не валим apply).
+    $sql = "INSERT INTO security_rules (user_id, domain_id, rule_type, rule_data, created_at)
+            VALUES (?, ?, ?, ?, datetime('now'))";
+    for ($attempt = 1; $attempt <= 4; $attempt++) {
+        try {
+            $stmt = $pdo->prepare($sql);
+            return $stmt->execute([$userId, $domainId, $ruleType, $ruleData]);
+        } catch (PDOException $e) {
+            $locked = stripos($e->getMessage(), 'locked') !== false
+                   || stripos($e->getMessage(), 'busy') !== false;
+            if ($locked && $attempt < 4) {
+                usleep(300000 * $attempt); // 0.3s, 0.6s, 0.9s
+                continue;
+            }
+            // Стойкая блокировка/иная ошибка БД — не критично: правило на Cloudflare стоит.
+            error_log("saveSecurityRule: пропущена запись bookkeeping ($ruleType, domain $domainId): " . $e->getMessage());
+            return false;
+        }
+    }
+    return false;
 }
 
 function loadBadBotsList($rules) {

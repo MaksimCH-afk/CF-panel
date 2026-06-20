@@ -50,10 +50,21 @@ class QueueProcessor {
         $results = [];
         
         try {
+            // Авто-сброс зависших задач: если задача >10 минут в статусе processing,
+            // воркер по ней умер/завис — помечаем failed, чтобы она не висела вечно.
+            $this->pdo->exec("
+                UPDATE queue
+                SET status = 'failed',
+                    result = COALESCE(result, '') || ' [auto-failed: stuck in processing >10min]'
+                WHERE status = 'processing'
+                  AND started_at IS NOT NULL
+                  AND started_at < datetime('now', '-10 minutes')
+            ");
+
             // Получаем pending задачи
             $stmt = $this->pdo->prepare("
-                SELECT * FROM queue 
-                WHERE status = 'pending' 
+                SELECT * FROM queue
+                WHERE status = 'pending'
                 ORDER BY created_at ASC 
                 LIMIT ?
             ");
