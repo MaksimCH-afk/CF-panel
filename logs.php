@@ -9,22 +9,32 @@ $page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
 $perPage = 50;
 $offset = ($page - 1) * $perPage;
 
+// Фильтр по тексту/домену/аккаунту (поиск в action+details)
+$q = trim($_GET['q'] ?? '');
+$where = "l.user_id = ?";
+$params = [$userId];
+if ($q !== '') {
+    $where .= " AND (l.action LIKE ? OR l.details LIKE ?)";
+    $params[] = "%$q%";
+    $params[] = "%$q%";
+}
+
 // Get total count
-$countStmt = $pdo->prepare("SELECT COUNT(*) FROM logs WHERE user_id = ?");
-$countStmt->execute([$userId]);
+$countStmt = $pdo->prepare("SELECT COUNT(*) FROM logs l WHERE $where");
+$countStmt->execute($params);
 $totalLogs = $countStmt->fetchColumn();
 $totalPages = ceil($totalLogs / $perPage);
 
 // Get logs with pagination
 $stmt = $pdo->prepare("
-    SELECT l.*, ca.domain 
-    FROM logs l 
+    SELECT l.*, ca.domain
+    FROM logs l
     LEFT JOIN cloudflare_accounts ca ON l.user_id = ca.user_id AND l.details LIKE '%' || ca.domain || '%'
-    WHERE l.user_id = ? 
+    WHERE $where
     ORDER BY l.timestamp DESC
     LIMIT ? OFFSET ?
 ");
-$stmt->execute([$userId, $perPage, $offset]);
+$stmt->execute(array_merge($params, [$perPage, $offset]));
 $logs = $stmt->fetchAll();
 
 // Action type colors
@@ -62,6 +72,11 @@ include 'sidebar.php';
                 <p class="text-muted mb-0">История всех операций в системе</p>
             </div>
             <div class="d-flex gap-2">
+                <form method="GET" class="d-flex gap-1">
+                    <input type="text" name="q" class="form-control form-control-sm" style="width:220px" placeholder="Поиск: домен / аккаунт / действие" value="<?php echo htmlspecialchars($q); ?>">
+                    <button class="btn btn-outline-secondary btn-sm" type="submit"><i class="fas fa-search"></i></button>
+                    <?php if ($q !== ''): ?><a class="btn btn-outline-secondary btn-sm" href="logs.php"><i class="fas fa-times"></i></a><?php endif; ?>
+                </form>
                 <button class="btn btn-outline-danger btn-sm" onclick="clearLogs()">
                     <i class="fas fa-trash me-1"></i>Очистить логи
                 </button>

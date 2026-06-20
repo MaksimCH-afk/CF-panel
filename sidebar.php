@@ -18,7 +18,12 @@ $currentPage = basename($_SERVER['PHP_SELF']);
             <i class="fas fa-tachometer-alt"></i>
             <span>Дашборд</span>
         </a>
-        
+
+        <a href="<?php echo BASE_PATH; ?>health.php" class="sidebar-link <?php echo $currentPage == 'health.php' ? 'active' : ''; ?>">
+            <i class="fas fa-heart-pulse"></i>
+            <span>Здоровье</span>
+        </a>
+
         <a href="<?php echo BASE_PATH; ?>mass_operations.php" class="sidebar-link <?php echo $currentPage == 'mass_operations.php' ? 'active' : ''; ?>">
             <i class="fas fa-layer-group"></i>
             <span>Массовые операции</span>
@@ -92,14 +97,6 @@ $currentPage = basename($_SERVER['PHP_SELF']);
         <a href="<?php echo BASE_PATH; ?>documentation.php" class="sidebar-link <?php echo $currentPage == 'documentation.php' ? 'active' : ''; ?>">
             <i class="fas fa-book"></i>
             <span>Документация</span>
-        </a>
-        
-        <div class="sidebar-divider"></div>
-        
-        <!-- Account -->
-        <a href="<?php echo BASE_PATH; ?>logout.php" class="sidebar-link text-danger">
-            <i class="fas fa-sign-out-alt"></i>
-            <span>Выход</span>
         </a>
     </div>
 </div>

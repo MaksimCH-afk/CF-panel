@@ -1,11 +1,5 @@
 <?php
-// Проверяем, установлена ли система
-if (!file_exists('cloudflare_panel.db')) {
-    // Если нет, перенаправляем на установку
-    header('Location: install.php');
-} else {
-    // Если да, перенаправляем на логин
-    header('Location: login.php');
-}
+// Авторизация отключена (single-user) — открываем дашборд сразу.
+// config.php (через dashboard.php) сам создаст БД при первом запуске.
+header('Location: dashboard.php');
 exit;
-?> 

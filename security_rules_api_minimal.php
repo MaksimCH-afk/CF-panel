@@ -66,7 +66,12 @@ try {
             $result = applyReferrerOnly($pdo, $userId, $_POST);
             echo json_encode($result);
             break;
-            
+
+        case 'apply_only_google':
+            $result = applyOnlyGoogle($pdo, $userId, $_POST);
+            echo json_encode($result);
+            break;
+
         case 'deploy_worker':
             $result = deployWorker($pdo, $userId, $_POST);
             echo json_encode($result);
@@ -401,6 +406,65 @@ function applyReferrerOnly($pdo, $userId, $data) {
     }
     
     return ['success' => true, 'applied' => $applied, 'total' => count($domainIds)];
+}
+
+// «Только Google»: 2 WAF custom-правила (skip Googlebot первым + block all other последним).
+// Существующие правила сохраняются между ними. Повторное применение не дублирует.
+function applyOnlyGoogle($pdo, $userId, $data) {
+    $scope = $data['scope'] ?? [];
+    $domainIds = getScopeDomains($pdo, $userId, $scope);
+    if (empty($domainIds)) {
+        return ['success' => false, 'error' => 'Нет доменов для применения'];
+    }
+
+    $allowRule = [
+        'action' => 'skip',
+        'expression' => '(http.user_agent contains "Googlebot") or (http.user_agent contains "Google-") or (http.user_agent contains "-Google")',
+        'description' => 'Allow Google Bot',
+        'action_parameters' => [
+            'ruleset' => 'current',
+            'phases' => ['http_ratelimit', 'http_request_sbfm', 'http_request_firewall_managed'],
+            'products' => ['zoneLockdown', 'uaBlock', 'bic', 'hot', 'securityLevel', 'rateLimit', 'waf'],
+        ],
+        'logging' => ['enabled' => true],
+    ];
+    $blockRule = [
+        'action' => 'block',
+        'expression' => '(starts_with(http.request.uri, "/"))',
+        'description' => 'Block all other',
+    ];
+
+    $applied = 0;
+    $errors = [];
+    $proxies = getProxies($pdo, $userId);
+
+    foreach ($domainIds as $domainId) {
+        $stmt = $pdo->prepare("SELECT ca.domain, ca.zone_id, cc.email, cc.api_key, cc.auth_type FROM cloudflare_accounts ca JOIN cloudflare_credentials cc ON ca.account_id = cc.id WHERE ca.id = ? AND ca.user_id = ?");
+        $stmt->execute([$domainId, $userId]);
+        $domain = $stmt->fetch();
+        if (!$domain || !$domain['zone_id']) continue;
+
+        // Текущие правила без наших двух (чтобы не дублировать при повторном применении)
+        $current = cfGetCustomRuleset($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], $proxies, $userId);
+        if ($current['error']) { $errors[] = $domain['domain'] . ': ' . $current['error']; continue; }
+        $middle = array_values(array_filter($current['rules'], function ($r) {
+            $d = $r['description'] ?? '';
+            return $d !== 'Allow Google Bot' && $d !== 'Block all other';
+        }));
+
+        // Порядок: skip Google -> существующие -> block all
+        $rules = array_merge([$allowRule], $middle, [$blockRule]);
+        $res = cfSetCustomRules($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], $rules, $proxies, $userId);
+
+        if ($res['success']) {
+            $applied++;
+            saveSecurityRule($pdo, $userId, $domainId, 'only_google', json_encode(['rules' => 2]));
+        } else {
+            $errors[] = $domain['domain'] . ': ' . $res['error'];
+        }
+    }
+
+    return ['success' => $applied > 0, 'applied' => $applied, 'total' => count($domainIds), 'errors' => $errors];
 }
 
 function deployWorker($pdo, $userId, $data) {

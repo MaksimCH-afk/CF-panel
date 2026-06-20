@@ -413,10 +413,12 @@ function getDomainStatusInfo($status, $httpCode = null) {
                                         </button>
                                         <ul class="dropdown-menu dropdown-menu-end shadow">
                                             <li><h6 class="dropdown-header">Управление</h6></li>
-                                            <li><a class="dropdown-item" href="#" onclick="updateDNS(<?php echo $domain['id']; ?>)"><i class="fas fa-globe me-2 text-primary"></i>Обновить DNS</a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="updateDNS(<?php echo $domain['id']; ?>)"><i class="fas fa-globe me-2 text-primary"></i>Обновить DNS (IP)</a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="openDnsManager(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')"><i class="fas fa-list me-2 text-primary"></i>DNS записи (A/CNAME/TXT/MX)</a></li>
                                             <li><a class="dropdown-item" href="#" onclick="checkSSL(<?php echo $domain['id']; ?>)"><i class="fas fa-shield-alt me-2 text-success"></i>Проверить SSL</a></li>
                                             <li><a class="dropdown-item" href="#" onclick="checkStatus(<?php echo $domain['id']; ?>)"><i class="fas fa-heartbeat me-2 text-danger"></i>Проверить статус</a></li>
                                             <li><a class="dropdown-item" href="#" onclick="purgeDomainCache(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')"><i class="fas fa-broom me-2 text-warning"></i>Очистить кэш</a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="openAnalytics(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')"><i class="fas fa-chart-line me-2 text-info"></i>Аналитика</a></li>
                                             <li><hr class="dropdown-divider"></li>
                                             <li><h6 class="dropdown-header">Безопасность</h6></li>
                                             <li><a class="dropdown-item" href="#" onclick="toggleUnderAttack(<?php echo $domain['id']; ?>, true)"><i class="fas fa-bolt me-2 text-warning"></i>Under Attack ON</a></li>

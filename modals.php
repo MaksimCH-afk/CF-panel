@@ -304,6 +304,9 @@
                                         </td>
                                         <td class="text-center"><?php echo (int)$acc['domains_count']; ?></td>
                                         <td class="text-end">
+                                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="probeAccount(<?php echo (int)$acc['id']; ?>)">
+                                                <i class="fas fa-key me-1"></i>Проверить права
+                                            </button>
                                             <form method="POST" action="handle_forms.php" class="d-inline"
                                                   onsubmit="return confirm('Удалить аккаунт <?php echo htmlspecialchars(addslashes($acc['email'])); ?> и все его домены (<?php echo (int)$acc['domains_count']; ?>)? Это действие необратимо.');">
                                                 <input type="hidden" name="account_id" value="<?php echo (int)$acc['id']; ?>">
@@ -313,6 +316,7 @@
                                             </form>
                                         </td>
                                     </tr>
+                                    <tr id="probeRow<?php echo (int)$acc['id']; ?>" style="display:none;"><td colspan="4" class="bg-light"><div id="probeResult<?php echo (int)$acc['id']; ?>"></div></td></tr>
                                 <?php endforeach; ?>
                             </tbody>
                         </table>
@@ -320,6 +324,26 @@
                     <div class="alert alert-warning mt-2 mb-0">
                         <small><i class="fas fa-exclamation-triangle me-1"></i>Удаление аккаунта удаляет из панели все его домены и связанные записи (очередь, правила). На самом Cloudflare ничего не удаляется.</small>
                     </div>
+                    <script>
+                    async function probeAccount(id) {
+                        const row = document.getElementById('probeRow' + id);
+                        const out = document.getElementById('probeResult' + id);
+                        row.style.display = '';
+                        out.innerHTML = '<span class="text-muted small"><i class="fas fa-spinner fa-spin me-1"></i>Проверка прав токена…</span>';
+                        try {
+                            const res = await fetch('tokens_api.php', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'probe', account_id:id}) });
+                            const d = await res.json();
+                            if (!d.success) { out.innerHTML = `<span class="text-danger small">${d.error||'Ошибка'}</span>`; return; }
+                            const items = Object.keys(d.labels).map(k => {
+                                const has = d.capabilities[k];
+                                return `<span class="badge ${has?'bg-success':'bg-secondary'} me-1 mb-1">${has?'✓':'✗'} ${d.labels[k]}</span>`;
+                            }).join('');
+                            const missing = Object.keys(d.labels).filter(k => !d.capabilities[k]).map(k=>d.labels[k]);
+                            out.innerHTML = `<div class="small"><div class="mb-1">Права токена (проверено на <code>${d.zone}</code>):</div>${items}` +
+                                (missing.length ? `<div class="text-danger mt-1">Не хватает: ${missing.join(', ')}</div>` : `<div class="text-success mt-1">Все основные права на месте.</div>`) + `</div>`;
+                        } catch(e) { out.innerHTML = `<span class="text-danger small">${e.message}</span>`; }
+                    }
+                    </script>
                 <?php endif; ?>
             </div>
         </div>
@@ -1250,4 +1274,239 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 });
+</script>
+<!-- DNS Manager Modal -->
+<div class="modal fade" id="dnsManagerModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-list me-2"></i>DNS записи: <span id="dnsDomainName"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="dnsDomainId">
+                <!-- Add record form -->
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h6 class="mb-3"><i class="fas fa-plus me-2"></i>Добавить запись</h6>
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-2">
+                                <label class="form-label small mb-1">Тип</label>
+                                <select id="dnsType" class="form-select form-select-sm" onchange="dnsTypeChanged()">
+                                    <option>A</option><option>AAAA</option><option>CNAME</option>
+                                    <option>TXT</option><option>MX</option><option>NS</option><option>SRV</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small mb-1">Имя</label>
+                                <input id="dnsName" class="form-control form-control-sm" placeholder="@ или sub">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small mb-1">Содержимое</label>
+                                <input id="dnsContent" class="form-control form-control-sm" placeholder="IP / домен / текст">
+                            </div>
+                            <div class="col-md-1" id="dnsPriorityWrap" style="display:none;">
+                                <label class="form-label small mb-1">Приор.</label>
+                                <input id="dnsPriority" type="number" class="form-control form-control-sm" value="10">
+                            </div>
+                            <div class="col-md-1">
+                                <label class="form-label small mb-1">TTL</label>
+                                <select id="dnsTtl" class="form-select form-select-sm">
+                                    <option value="1">Auto</option><option value="300">5м</option>
+                                    <option value="3600">1ч</option><option value="86400">1д</option>
+                                </select>
+                            </div>
+                            <div class="col-md-1" id="dnsProxiedWrap">
+                                <div class="form-check mt-3">
+                                    <input class="form-check-input" type="checkbox" id="dnsProxied">
+                                    <label class="form-check-label small" for="dnsProxied">Proxy</label>
+                                </div>
+                            </div>
+                            <div class="col-md-1">
+                                <button class="btn btn-primary btn-sm w-100" onclick="dnsCreate()"><i class="fas fa-plus"></i></button>
+                            </div>
+                        </div>
+                        <small class="text-muted">Имя <code>@</code> = корень домена. «Proxy» (оранжевое облако) доступно только для A/AAAA/CNAME.</small>
+                    </div>
+                </div>
+                <!-- Toolbar: export/import BIND -->
+                <div class="d-flex gap-2 mb-2">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="dnsExport()"><i class="fas fa-download me-1"></i>Экспорт зоны (BIND)</button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('dnsImportWrap').classList.toggle('d-none')"><i class="fas fa-upload me-1"></i>Импорт BIND</button>
+                </div>
+                <div id="dnsImportWrap" class="d-none mb-3">
+                    <textarea id="dnsImportText" class="form-control form-control-sm mb-1" rows="4" placeholder="Вставьте содержимое BIND-зоны…"></textarea>
+                    <button class="btn btn-sm btn-primary" onclick="dnsImport()"><i class="fas fa-check me-1"></i>Импортировать</button>
+                    <small class="text-muted ms-2">Записи добавятся к существующим.</small>
+                </div>
+                <!-- Records table -->
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover">
+                        <thead><tr><th>Тип</th><th>Имя</th><th>Содержимое</th><th>Proxy</th><th>TTL</th><th></th></tr></thead>
+                        <tbody id="dnsRecordsBody"><tr><td colspan="6" class="text-muted text-center">Загрузка...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let dnsModalInstance = null;
+function openDnsManager(id, domain) {
+    document.getElementById('dnsDomainId').value = id;
+    document.getElementById('dnsDomainName').textContent = domain;
+    dnsModalInstance = new bootstrap.Modal(document.getElementById('dnsManagerModal'));
+    dnsModalInstance.show();
+    dnsLoad();
+}
+function dnsTypeChanged() {
+    const t = document.getElementById('dnsType').value;
+    document.getElementById('dnsPriorityWrap').style.display = (t === 'MX' || t === 'SRV') ? '' : 'none';
+    document.getElementById('dnsProxiedWrap').style.display = (t === 'A' || t === 'AAAA' || t === 'CNAME') ? '' : 'none';
+}
+async function dnsLoad() {
+    const id = document.getElementById('dnsDomainId').value;
+    const body = document.getElementById('dnsRecordsBody');
+    body.innerHTML = '<tr><td colspan="6" class="text-muted text-center">Загрузка...</td></tr>';
+    try {
+        const res = await fetch('dns_api.php?action=list&domain_id=' + id);
+        const data = await res.json();
+        if (!data.success) { body.innerHTML = `<tr><td colspan="6" class="text-danger">${data.error||'Ошибка'}</td></tr>`; return; }
+        if (!data.records.length) { body.innerHTML = '<tr><td colspan="6" class="text-muted text-center">Записей нет</td></tr>'; return; }
+        window._dnsRecords = {};
+        body.innerHTML = data.records.map(r => {
+            window._dnsRecords[r.id] = r;
+            return `
+            <tr id="dnsRow_${r.id}">
+                <td><span class="badge bg-secondary">${r.type}</span></td>
+                <td>${escapeHtml(r.name)}</td>
+                <td><code style="white-space:normal;word-break:break-all;">${escapeHtml(String(r.content))}</code>${r.priority!=null?` <span class="text-muted small">(prio ${r.priority})</span>`:''}</td>
+                <td>${r.proxiable ? (r.proxied ? '<span class="text-warning">🟠 Proxied</span>' : '<span class="text-muted">DNS only</span>') : '—'}</td>
+                <td>${r.ttl === 1 ? 'Auto' : r.ttl}</td>
+                <td class="text-end text-nowrap">
+                    <button class="btn btn-sm btn-outline-primary" onclick="dnsEditStart('${r.id}')"><i class="fas fa-pen"></i></button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="dnsDelete('${r.id}')"><i class="fas fa-trash"></i></button>
+                </td>
+            </tr>`;
+        }).join('');
+    } catch (e) { body.innerHTML = `<tr><td colspan="6" class="text-danger">${e.message}</td></tr>`; }
+}
+function dnsEditStart(rid) {
+    const r = (window._dnsRecords||{})[rid]; if (!r) return;
+    const row = document.getElementById('dnsRow_' + rid);
+    const proxyCell = r.proxiable ? `<select id="ed_proxied_${rid}" class="form-select form-select-sm"><option value="1" ${r.proxied?'selected':''}>Proxied</option><option value="0" ${!r.proxied?'selected':''}>DNS only</option></select>` : '—';
+    row.innerHTML = `
+        <td><span class="badge bg-secondary">${r.type}</span></td>
+        <td>${escapeHtml(r.name)}</td>
+        <td><input id="ed_content_${rid}" class="form-control form-control-sm" value="${escapeHtml(String(r.content))}"></td>
+        <td>${proxyCell}</td>
+        <td><input id="ed_ttl_${rid}" type="number" class="form-control form-control-sm" value="${r.ttl}" style="width:90px"></td>
+        <td class="text-end text-nowrap">
+            <button class="btn btn-sm btn-success" onclick="dnsEditSave('${rid}')"><i class="fas fa-check"></i></button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="dnsLoad()"><i class="fas fa-times"></i></button>
+        </td>`;
+}
+async function dnsEditSave(rid) {
+    const id = document.getElementById('dnsDomainId').value;
+    const r = (window._dnsRecords||{})[rid];
+    const body = new URLSearchParams({ action:'update', domain_id:id, record_id:rid, type:r.type, name:r.name,
+        content: document.getElementById('ed_content_'+rid).value.trim(),
+        ttl: document.getElementById('ed_ttl_'+rid).value });
+    const pe = document.getElementById('ed_proxied_'+rid); if (pe) body.append('proxied', pe.value);
+    if (r.priority != null) body.append('priority', r.priority);
+    try {
+        const res = await fetch('dns_api.php', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
+        const d = await res.json();
+        if (d.success) { showToast('Запись обновлена','success'); dnsLoad(); } else showToast(d.error||'Ошибка','error');
+    } catch(e){ showToast(e.message,'error'); }
+}
+async function dnsExport() {
+    const id = document.getElementById('dnsDomainId').value;
+    try {
+        const res = await fetch('dns_api.php?action=export&domain_id=' + id);
+        const d = await res.json();
+        if (!d.success) { showToast(d.error||'Ошибка','error'); return; }
+        const blob = new Blob([d.bind], {type:'text/plain'});
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = d.filename || 'zone.txt'; a.click();
+    } catch(e){ showToast(e.message,'error'); }
+}
+async function dnsImport() {
+    const id = document.getElementById('dnsDomainId').value;
+    const content = document.getElementById('dnsImportText').value;
+    if (!content.trim()) { showToast('Вставьте BIND','warning'); return; }
+    try {
+        const res = await fetch('dns_api.php', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: new URLSearchParams({action:'import', domain_id:id, content}) });
+        const d = await res.json();
+        if (d.success) { showToast(`Импортировано записей: ${d.added ?? '?'} из ${d.total ?? '?'}`,'success'); document.getElementById('dnsImportText').value=''; dnsLoad(); }
+        else showToast(d.error||'Ошибка','error');
+    } catch(e){ showToast(e.message,'error'); }
+}
+async function dnsCreate() {
+    const id = document.getElementById('dnsDomainId').value;
+    const type = document.getElementById('dnsType').value;
+    const name = document.getElementById('dnsName').value.trim();
+    const content = document.getElementById('dnsContent').value.trim();
+    if (!name || !content) { showToast('Заполните имя и содержимое', 'warning'); return; }
+    const body = new URLSearchParams({ action:'create', domain_id:id, type, name, content, ttl: document.getElementById('dnsTtl').value });
+    if (type === 'A' || type === 'AAAA' || type === 'CNAME') body.append('proxied', document.getElementById('dnsProxied').checked ? '1' : '0');
+    if (type === 'MX' || type === 'SRV') body.append('priority', document.getElementById('dnsPriority').value);
+    try {
+        const res = await fetch('dns_api.php', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
+        const data = await res.json();
+        if (data.success) { showToast('Запись добавлена', 'success'); document.getElementById('dnsName').value=''; document.getElementById('dnsContent').value=''; dnsLoad(); }
+        else showToast(data.error || 'Ошибка', 'error');
+    } catch (e) { showToast(e.message, 'error'); }
+}
+async function dnsDelete(recordId) {
+    if (!confirm('Удалить запись?')) return;
+    const id = document.getElementById('dnsDomainId').value;
+    try {
+        const res = await fetch('dns_api.php', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: new URLSearchParams({ action:'delete', domain_id:id, record_id:recordId }) });
+        const data = await res.json();
+        if (data.success) { showToast('Удалено', 'success'); dnsLoad(); } else showToast(data.error || 'Ошибка', 'error');
+    } catch (e) { showToast(e.message, 'error'); }
+}
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+</script>
+
+<!-- Analytics Modal -->
+<div class="modal fade" id="analyticsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-chart-line me-2"></i>Аналитика: <span id="anDomain"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="anBody">
+                <div class="text-muted text-center py-4"><i class="fas fa-spinner fa-spin me-1"></i>Загрузка…</div>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+async function openAnalytics(id, domain) {
+    document.getElementById('anDomain').textContent = domain;
+    const body = document.getElementById('anBody');
+    body.innerHTML = '<div class="text-muted text-center py-4"><i class="fas fa-spinner fa-spin me-1"></i>Загрузка…</div>';
+    new bootstrap.Modal(document.getElementById('analyticsModal')).show();
+    try {
+        const res = await fetch('analytics_api.php', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'dashboard', domain_id:id, days:7}) });
+        const d = await res.json();
+        if (!d.success) { body.innerHTML = `<div class="alert alert-warning">${d.error||'Ошибка'}</div>`; return; }
+        const fmtBytes = b => b>1e9?(b/1e9).toFixed(2)+' ГБ':b>1e6?(b/1e6).toFixed(1)+' МБ':(b/1e3).toFixed(0)+' КБ';
+        const maxReq = Math.max(1, ...d.days.map(x=>x.requests));
+        const bars = d.days.map(x => `<div class="d-flex align-items-center mb-1"><div style="width:90px" class="small text-muted">${x.date}</div><div class="flex-grow-1"><div class="bg-info" style="height:14px;width:${Math.round(x.requests/maxReq*100)}%;min-width:2px;border-radius:3px"></div></div><div style="width:90px" class="small text-end">${x.requests.toLocaleString()}</div></div>`).join('');
+        const countries = (d.countries||[]).map(c=>`<span class="badge bg-light text-dark border me-1 mb-1">${c.country}: ${c.count.toLocaleString()}</span>`).join('') || '<span class="text-muted small">нет данных</span>';
+        body.innerHTML = `
+            <div class="row text-center mb-3">
+                <div class="col-4"><div class="h4 mb-0">${d.totals.requests.toLocaleString()}</div><small class="text-muted">запросов (7д)</small></div>
+                <div class="col-4"><div class="h4 mb-0">${fmtBytes(d.totals.bytes)}</div><small class="text-muted">трафик</small></div>
+                <div class="col-4"><div class="h4 mb-0 text-danger">${d.totals.threats.toLocaleString()}</div><small class="text-muted">угроз</small></div>
+            </div>
+            <h6 class="small fw-bold">Запросы по дням</h6>${bars}
+            <h6 class="small fw-bold mt-3">Топ стран</h6>${countries}
+        `;
+    } catch(e){ body.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
+}
 </script>

@@ -60,7 +60,7 @@ try {
             $proxies = getProxies($pdo, $userId);
             $a = cfZoneAnalyticsGraphQL($pdo, $domainRow['email'], $domainRow['api_key'], $domainRow['zone_id'], $days, $proxies, $userId);
             echo json_encode($a['success']
-                ? ['success' => true, 'domain' => $domainRow['domain'], 'days' => $a['days'], 'totals' => $a['totals']]
+                ? ['success' => true, 'domain' => $domainRow['domain'], 'days' => $a['days'], 'totals' => $a['totals'], 'countries' => $a['countries'] ?? []]
                 : ['success' => false, 'error' => $a['error']]);
             break;
 

@@ -23,8 +23,8 @@ define('BASE_PATH', $basePath);
 define('ROOT_PATH', dirname(__FILE__) . '/');
 define('DB_PATH', ROOT_PATH . 'cloudflare_panel.db');
 
-// Версия панели (счётчик). Текущая — 5.0, следующие правки: 6.0, 7.0, ...
-define('PANEL_VERSION', '5.0');
+// Версия панели (счётчик). Текущая — 7.0, следующие правки: 8.0, 9.0, ...
+define('PANEL_VERSION', '7.0');
 
 // Перенаправление на HTTPS, если соединение не защищено (исключая localhost, CLI и API файлы)
 if (php_sapi_name() !== 'cli') {
@@ -318,6 +318,12 @@ try {
     } catch (Exception $e) {
         // Колонка уже существует
     }
+    // Кэш прав токена (JSON), заполняется префлайтом
+    try {
+        $pdo->exec("ALTER TABLE cloudflare_credentials ADD COLUMN capabilities TEXT");
+    } catch (Exception $e) {
+        // Колонка уже существует
+    }
 
     try {
         $pdo->exec("UPDATE cloudflare_accounts SET updated_at = COALESCE(updated_at, created_at)");
@@ -365,6 +371,18 @@ try {
 
 } catch (PDOException $e) {
     die("Database connection failed: " . $e->getMessage());
+}
+
+// === Single-user режим: авторизация отключена ===
+// Панель используется одним владельцем, поэтому авто-логиним под первым пользователем.
+// (Защиту доступа обеспечивает окружение: VPN/файрвол/reverse-proxy перед панелью.)
+if (!isset($_SESSION['user_id'])) {
+    try {
+        $defaultUid = $pdo->query("SELECT id FROM users ORDER BY id LIMIT 1")->fetchColumn();
+        $_SESSION['user_id'] = $defaultUid ?: 1;
+    } catch (Exception $e) {
+        $_SESSION['user_id'] = 1;
+    }
 }
 
 // Настройки отладки (отключаем для API запросов чтобы не мешать JSON)

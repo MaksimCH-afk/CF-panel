@@ -123,8 +123,13 @@ $stats = $statsStmt->fetch();
                     </button>
                 </li>
                 <li class="nav-item" role="presentation">
-                    <button class="nav-link py-3 px-4 border-top-0 border-end-0" id="worker-manager-tab" data-bs-toggle="tab" data-bs-target="#worker-manager" type="button">
+                    <button class="nav-link py-3 px-4 border-top-0" id="worker-manager-tab" data-bs-toggle="tab" data-bs-target="#worker-manager" type="button">
                         <i class="fas fa-code me-2"></i>Cloudflare Workers
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link py-3 px-4 border-top-0 border-end-0" id="only-google-tab" data-bs-toggle="tab" data-bs-target="#only-google" type="button">
+                        <i class="fab fa-google me-2"></i>Только Google
                     </button>
                 </li>
             </ul>
@@ -472,26 +477,17 @@ $stats = $statsStmt->fetch();
                         <!-- Выбор шаблона -->
                         <div class="col-md-3">
                             <h5 class="mb-3"><i class="fas fa-file-code me-2"></i>Шаблоны</h5>
+                            <div class="alert alert-secondary small py-2">
+                                Для ботов/гео/поисковиков используйте вкладки выше (WAF — бесплатно, без лимита запросов). Воркеры — для того, что правилами не сделать: <strong>404/410</strong>, rate-limit, кастом.
+                            </div>
                             <div class="list-group" id="workerTemplateList">
                                 <button class="list-group-item list-group-item-action active" onclick="loadWorkerTemplateWithConfig('advanced-protection')">
                                     <h6 class="mb-1"><i class="fas fa-shield-alt me-2 text-primary"></i>Advanced Protection</h6>
                                     <small class="text-muted">Полная защита</small>
                                 </button>
-                                <button class="list-group-item list-group-item-action" onclick="loadWorkerTemplateWithConfig('bot-only')">
-                                    <h6 class="mb-1"><i class="fas fa-robot me-2 text-warning"></i>Bot Blocker</h6>
-                                    <small class="text-muted">Блокировка ботов</small>
-                                </button>
-                                <button class="list-group-item list-group-item-action" onclick="loadWorkerTemplateWithConfig('geo-only')">
-                                    <h6 class="mb-1"><i class="fas fa-globe me-2 text-info"></i>Geo Blocker</h6>
-                                    <small class="text-muted">Геоблокировка</small>
-                                </button>
                                 <button class="list-group-item list-group-item-action" onclick="loadWorkerTemplateWithConfig('rate-limit')">
                                     <h6 class="mb-1"><i class="fas fa-tachometer-alt me-2 text-danger"></i>Rate Limiting</h6>
                                     <small class="text-muted">Ограничение запросов</small>
-                                </button>
-                                <button class="list-group-item list-group-item-action" onclick="loadWorkerTemplateWithConfig('referrer-only')">
-                                    <h6 class="mb-1"><i class="fas fa-search me-2 text-success"></i>Referrer Only</h6>
-                                    <small class="text-muted">Только поисковики</small>
                                 </button>
                                 <button class="list-group-item list-group-item-action" onclick="loadWorkerTemplateWithConfig('gone-410')">
                                     <h6 class="mb-1"><i class="fas fa-ban me-2 text-danger"></i>Gone 410</h6>
@@ -592,6 +588,56 @@ $stats = $statsStmt->fetch();
                                     </button>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Только Google -->
+                <div class="tab-pane fade" id="only-google" role="tabpanel">
+                    <div class="row">
+                        <div class="col-md-7">
+                            <h5 class="mb-3"><i class="fab fa-google me-2 text-danger"></i>Пропускать только Google, остальное блокировать</h5>
+                            <div class="alert alert-info small">
+                                Создаёт <strong>2 WAF-правила</strong> (через Rulesets), как в интерфейсе Cloudflare:
+                                <ol class="mb-2 mt-2 ps-3">
+                                    <li><strong>Allow Google Bot</strong> — User Agent содержит <code>Googlebot</code> / <code>Google-</code> / <code>-Google</code> → action <strong>Skip</strong> (пропуск всех WAF-компонентов), логирование вкл. Ставится <u>первым</u>.</li>
+                                    <li><strong>Block all other</strong> — <code>starts_with(http.request.uri, "/")</code> → <strong>Block</strong>. Ставится <u>последним</u>.</li>
+                                </ol>
+                                Работает «в комбе»: Google проходит, остальной трафик блокируется. Существующие custom-правила сохраняются между ними.
+                            </div>
+                            <div class="alert alert-warning small mb-0">
+                                <i class="fas fa-triangle-exclamation me-1"></i>Это закроет сайт для всех, кроме Googlebot. Прямые посетители тоже будут заблокированы — применяйте осознанно (cloaking/тех. страницы).
+                            </div>
+                        </div>
+                        <div class="col-md-5">
+                            <h5 class="mb-3 text-primary">Область применения</h5>
+                            <div class="mb-3">
+                                <label class="form-label">Применить к:</label>
+                                <select class="form-select" id="onlyGoogleScope">
+                                    <option value="all">Все домены (<?php echo count($domains); ?>)</option>
+                                    <option value="group">Выбранная группа</option>
+                                    <option value="selected">Выбранные домены</option>
+                                </select>
+                            </div>
+                            <div id="onlyGoogleGroup" style="display:none;" class="mb-3">
+                                <select class="form-select">
+                                    <option value="">Выберите группу</option>
+                                    <?php foreach ($groups as $group): ?>
+                                        <option value="<?php echo $group['id']; ?>"><?php echo htmlspecialchars($group['name']); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div id="onlyGoogleDomains" style="display:none; max-height:200px; overflow-y:auto;" class="border rounded p-2 mb-3 bg-white">
+                                <?php foreach ($domains as $domain): ?>
+                                    <div class="form-check">
+                                        <input class="form-check-input domain-checkbox" type="checkbox" value="<?php echo $domain['id']; ?>" data-group="<?php echo $domain['group_id']; ?>">
+                                        <label class="form-check-label"><?php echo htmlspecialchars($domain['domain']); ?></label>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                            <button class="btn btn-danger w-100" onclick="applyOnlyGoogle()">
+                                <i class="fab fa-google me-2"></i>Применить «Только Google»
+                            </button>
                         </div>
                     </div>
                 </div>

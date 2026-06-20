@@ -80,30 +80,31 @@ try {
             ];
             break;
 
-        // ПРЕСЕТ 1: 301-редирект (постранично или весь сайт на другой сайт)
+        // ПРЕСЕТ 1: 301-редирект через Single/Dynamic Redirect (Rulesets) — замена Page Rules.
+        // Поддерживает: страница -> страница (любые сайты) и весь сайт -> одна страница другого сайта.
         case 'redirect_301':
             $target = trim($_POST['target'] ?? '');           // куда редиректим (полный URL)
             $source = trim($_POST['source'] ?? '');           // исходный путь (пусто = весь сайт)
             $whole  = empty($source) || $source === '/' || $source === '/*';
             if ($target === '') throw new Exception('Укажите целевой URL (target)');
 
+            $host = $domain['domain'];
             if ($whole) {
-                // Весь сайт на главную другого сайта
-                $sourceMatch = "*{$domain['domain']}/*";
-                $targetUrl = rtrim($target, '/') . '/';
+                // Весь сайт -> указанный URL (например главная нового сайта)
+                $expr = '(http.host eq "' . addslashes($host) . '")';
+                $targetUrl = $target;
+                $desc = "301 весь сайт -> $target";
             } else {
                 // Конкретная страница -> конкретный URL
                 $src = '/' . ltrim($source, '/');
-                $sourceMatch = "*{$domain['domain']}{$src}";
+                $expr = '(http.host eq "' . addslashes($host) . '" and http.request.uri.path eq "' . addslashes($src) . '")';
                 $targetUrl = $target;
+                $desc = "301 $src -> $target";
             }
-            $rule = [
-                'targets' => [[ 'target' => 'url', 'constraint' => ['operator' => 'matches', 'value' => $sourceMatch] ]],
-                'actions' => [[ 'id' => 'forwarding_url', 'value' => ['url' => $targetUrl, 'status_code' => 301] ]],
-                'priority' => 1,
-                'status' => 'active'
-            ];
-            break;
+            $res = cfAddRedirectRule($pdo, $domain['email'], $domain['api_key'], $zoneId, $expr, $targetUrl, $desc, 301, false, $proxies, $_SESSION['user_id']);
+            if (!$res['success']) throw new Exception('Не удалось применить редирект: ' . $res['error']);
+            echo json_encode(['success' => true, 'message' => '301-редирект применён (Single Redirect Rule)']);
+            exit;
 
         // ПРЕСЕТ 2: отдавать 404/410 для страницы или всего сайта (через WAF custom rule)
         case 'gone_410':

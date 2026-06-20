@@ -1,10 +1,11 @@
 services:
   cfpanel:
     build: .
-    container_name: cf-panel
+    image: cf-panel:latest          # имя образа в Docker Desktop
+    container_name: cf-panel        # имя контейнера
     ports:
-      - "1000:80"
+      - "1000:80"                   # ХОСТ:КОНТЕЙНЕР  → открывать http://localhost:1000
     volumes:
-      # Живой код + персист SQLite-БД на хосте (для локального запуска/разработки)
+      # Живой код + персист SQLite-БД на хосте (обновляется git pull без пересборки)
       - ./:/var/www/html
     restart: unless-stopped

@@ -211,7 +211,7 @@ if (!isset($_SESSION['user_id'])) {
                             <ol>
                                 <li>Система загружает список плохих ботов (из nginx-ultimate-bad-bot-blocker или встроенный)</li>
                                 <li>Формирует выражение Cloudflare: <code>(lower(http.user_agent) contains "semrush") or (lower(http.user_agent) contains "ahrefs") or ...</code></li>
-                                <li>Создает правило с действием <strong>Block</strong> через API: <code>POST zones/{zone_id}/firewall/rules</code></li>
+                                <li>Создает правило с действием <strong>Block</strong> через API: <code>PUT zones/{zone_id}/rulesets/phases/http_request_firewall_custom/entrypoint (WAF Custom Rules / Rulesets API)</code></li>
                             </ol>
                             
                             <h6 class="text-primary fw-bold mt-3">Категории блокировки:</h6>
@@ -336,7 +336,7 @@ if (!isset($_SESSION['user_id'])) {
                             <ol>
                                 <li>Выбранные страны группируются в выражение с оператором <code>in</code></li>
                                 <li>Для Whitelist добавляется NOT (блокировать всех НЕ из списка)</li>
-                                <li>API запрос: <code>POST zones/{zone_id}/firewall/rules</code></li>
+                                <li>API запрос: <code>PUT zones/{zone_id}/rulesets/phases/http_request_firewall_custom/entrypoint (WAF Custom Rules / Rulesets API)</code></li>
                             </ol>
                             
                             <div class="row mt-3">

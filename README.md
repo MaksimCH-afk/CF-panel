@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-2.0-blue?style=for-the-badge" alt="Version"/>
-  <img src="https://img.shields.io/badge/PHP-7.4+-purple?style=for-the-badge&logo=php" alt="PHP"/>
+  <img src="https://img.shields.io/badge/Version-5.0-blue?style=for-the-badge" alt="Version"/>
+  <img src="https://img.shields.io/badge/PHP-8.1-purple?style=for-the-badge&logo=php" alt="PHP"/>
   <img src="https://img.shields.io/badge/Cloudflare-API%20v4-orange?style=for-the-badge&logo=cloudflare" alt="Cloudflare"/>
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"/>
 </p>
 
-<h1 align="center">☁️ CloudPanel v2.0</h1>
+<h1 align="center">☁️ CloudPanel v5.0</h1>
 
 <p align="center">
   <strong>🚀 Мощная панель управления Cloudflare для массового управления доменами</strong>
@@ -222,6 +222,30 @@ cache/
 ---
 
 ## 📋 Changelog
+
+### Version 5.0 — 06.2026
+
+#### 🚀 Современные API Cloudflare + Docker
+
+**Безопасность переписана на актуальные API:**
+- ✅ **WAF Custom Rules (Rulesets API)** вместо устаревшего `firewall/rules` (Cloudflare перевёл его в maintenance mode). Боты / гео / «только поисковики» / IP / Smart WAF.
+- ✅ **Вкладка «Только Google»** — 2 WAF-правила (Allow Google Bot `skip` + Block all other) в правильном порядке, работают в комбе.
+- ✅ **Геоблокировка** с опцией «не блокировать поисковики» (`not cf.client.bot`).
+
+**Новое:**
+- ✅ **Аналитика домена через GraphQL API** (легаси dashboard отключён CF).
+- ✅ **Полный редактор DNS** — A/AAAA/CNAME/MX/TXT/NS/SRV, поддомены, proxy-статус (из меню домена).
+- ✅ **Page Rules: 301-редирект** (постранично/весь сайт) + воркер-шаблоны **404/410**.
+- ✅ **API Token (Bearer)** как основной способ авторизации + выбор Global API Key/Token.
+- ✅ **Удаление аккаунта** с каскадной чисткой доменов.
+- ✅ **Фильтр доменов по IP**, очистка кэша из меню домена, экспорт логов (CSV).
+
+**Инфраструктура:**
+- ✅ **Docker-деплой** (PHP 8.1 + Apache, порт 1000) с фоновым обработчиком очереди.
+- ✅ **SQLite WAL + busy_timeout** и индексы под масштаб (~1000 аккаунтов / 1500 доменов).
+
+**Исправлено:**
+- Авторизация Bearer-токенов (баг определения по длине ключа), пагинация зон при импорте, отображение SSL-режима, деплой воркеров (account-level), сотни мелких фиксов UX.
 
 ### Version 2.0 — 01.12.2025
 

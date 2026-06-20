@@ -90,7 +90,7 @@ include 'sidebar.php';
                         <i class="fas fa-arrow-right-arrow-left me-2"></i>Применить 301 редирект
                     </button>
                     <div class="alert alert-secondary small mt-2 mb-0">
-                        <i class="fas fa-info-circle me-1"></i><strong>Как это работает:</strong> Cloudflare Page Rule с действием <code>forwarding_url</code> (301). Если «откуда» пусто — весь сайт (<code>*домен/*</code>) уходит на указанный URL. Не трогает сервер — редирект на edge Cloudflare. <strong>404/410</strong> теперь делается через воркер-шаблоны (вкладка Cloudflare Workers).
+                        <i class="fas fa-info-circle me-1"></i><strong>Как это работает:</strong> современное <strong>Single Redirect Rule</strong> (Rulesets, фаза <code>http_request_dynamic_redirect</code>) — пришло на смену устаревающим Page Rules. «Откуда» пусто = весь сайт уходит на указанный URL; иначе конкретная страница → конкретный URL (можно на другой сайт). Редирект на edge Cloudflare, сервер не трогает. <strong>404/410</strong> — через воркер-шаблоны (вкладка Cloudflare Workers).<br><span class="text-danger">Требует право токена «Dynamic URL Redirects» (Edit).</span>
                     </div>
                 </div>
             </div>

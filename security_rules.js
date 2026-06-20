@@ -430,6 +430,33 @@ function applyBotBlocker() {
     });
 }
 
+// Применить «Только Google» (skip Googlebot + block all other)
+function applyOnlyGoogle() {
+    const scope = getScope('onlyGoogle');
+    if (!scope.count) { showError('Не выбраны домены'); return; }
+    if (!confirm(`Применить «Только Google» к ${scope.count} доменам?\n\nВНИМАНИЕ: сайт будет доступен только Googlebot, остальной трафик заблокируется.`)) {
+        return;
+    }
+    showLoading('Применение правил «Только Google»...');
+    $.post('security_rules_api_minimal.php', {
+        action: 'apply_only_google',
+        scope: scope
+    })
+    .done(function(response) {
+        hideLoading();
+        if (response.success) {
+            showSuccess(`Применено к ${response.applied} доменам`);
+            setTimeout(() => location.reload(), 2000);
+        } else {
+            showError(response.error || 'Ошибка применения');
+        }
+    })
+    .fail(function() {
+        hideLoading();
+        showError('Ошибка соединения с сервером');
+    });
+}
+
 // Применить блокировку IP
 function applyIPBlocker() {
     const ips = $('#ipBlockList').val().split('\n').filter(ip => ip.trim());

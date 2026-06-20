@@ -62,6 +62,27 @@ try {
             echo json_encode(['success' => true, 'csv' => $csv]);
             break;
 
+        case 'probe':
+            // Префлайт прав токена аккаунта (по первой его зоне)
+            $accountId = (int)($data['account_id'] ?? 0);
+            if ($accountId <= 0) throw new Exception('Не указан account_id');
+            $stmt = $pdo->prepare("SELECT cc.email, cc.api_key, cc.auth_type, ca.zone_id, ca.domain
+                FROM cloudflare_credentials cc
+                JOIN cloudflare_accounts ca ON ca.account_id = cc.id
+                WHERE cc.id = ? AND cc.user_id = ? AND ca.zone_id IS NOT NULL AND ca.zone_id != ''
+                LIMIT 1");
+            $stmt->execute([$accountId, $userId]);
+            $row = $stmt->fetch();
+            if (!$row) throw new Exception('У аккаунта нет доменов с zone_id для проверки');
+            $proxies = getProxies($pdo, $userId);
+            $cfAccountId = cfGetAccountId($pdo, ['email' => $row['email'], 'api_key' => $row['api_key'], 'auth_type' => $row['auth_type']], $row['zone_id'], $proxies, null);
+            $probe = cfProbeAccountCapabilities($pdo, $row['email'], $row['api_key'], $row['zone_id'], $cfAccountId, $proxies, null, $row['auth_type']);
+            // Сохраняем в БД
+            $pdo->prepare("UPDATE cloudflare_credentials SET capabilities = ? WHERE id = ? AND user_id = ?")
+                ->execute([json_encode($probe['ok']), $accountId, $userId]);
+            echo json_encode(['success' => true, 'capabilities' => $probe['ok'], 'labels' => cfCapabilityLabels(), 'zone' => $row['domain']]);
+            break;
+
         default:
             throw new Exception('Неизвестное действие');
     }

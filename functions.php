@@ -147,6 +147,53 @@ function cfBuildAuthHeaders($email, $apiKey, $authType = null) {
 }
 
 /**
+ * Префлайт прав токена: дешёвыми GET-пробами определяет, что токен умеет.
+ * Возвращает массив capability => bool (+ человекочитаемые подписи в cfCapabilityLabels()).
+ *
+ * @return array ['ok'=>['zone_settings'=>bool, ...], 'zone'=>string]
+ */
+function cfProbeAccountCapabilities($pdo, $email, $apiKey, $zoneId, $accountId = null, $proxies = [], $userId = null, $authType = null) {
+    $ok = [];
+    // userId=null в под-запросах: пробы не пишут логи (иначе ~10 записей подряд ловят "database is locked")
+    $probe = function ($endpoint, $base = 'zones') use ($pdo, $email, $apiKey, $proxies, $authType, $zoneId, $accountId) {
+        $prefix = $base === 'accounts' ? "accounts/$accountId" : "zones/$zoneId";
+        $r = cloudflareApiRequestDetailed($pdo, $email, $apiKey, "$prefix/$endpoint", 'GET', [], $proxies, null, $authType);
+        // success или 404 (доступ есть, просто ничего не создано) = право есть; 403/401/10000/9109 = нет
+        return !empty($r['success']) || (($r['http_code'] ?? 0) == 404);
+    };
+    $ok['zone_settings'] = $probe('settings/ssl');
+    $ok['dns']           = $probe('dns_records?per_page=1');
+    $ok['waf']           = $probe('rulesets/phases/http_request_firewall_custom/entrypoint');
+    $ok['redirects']     = $probe('rulesets/phases/http_request_dynamic_redirect/entrypoint');
+    $ok['page_rules']    = $probe('pagerules');
+    $ok['ssl_certs']     = $probe('ssl/certificate_packs?status=all');
+    $ok['workers_routes']= $probe('workers/routes');
+    if ($accountId) {
+        $ok['workers_scripts'] = $probe('workers/scripts', 'accounts');
+    }
+    // Аналитика — через GraphQL (без логирования)
+    $a = cfZoneAnalyticsGraphQL($pdo, $email, $apiKey, $zoneId, 1, $proxies, null, $authType);
+    $ok['analytics'] = !empty($a['success']);
+
+    return ['ok' => $ok, 'zone' => $zoneId];
+}
+
+/** Подписи прав для UI. */
+function cfCapabilityLabels() {
+    return [
+        'zone_settings' => 'Zone Settings (SSL/HTTPS/кэш)',
+        'dns' => 'DNS-записи',
+        'waf' => 'WAF / Security (боты, гео, Только Google)',
+        'redirects' => '301-редиректы (Dynamic Redirect)',
+        'page_rules' => 'Page Rules',
+        'ssl_certs' => 'SSL-сертификаты / Origin CA',
+        'workers_routes' => 'Workers Routes',
+        'workers_scripts' => 'Workers Scripts (деплой воркеров)',
+        'analytics' => 'Аналитика (GraphQL)',
+    ];
+}
+
+/**
  * Преобразует неуспешный ответ Cloudflare в читаемое сообщение.
  * Распознаёт типовые проблемы токена (нет прав / неверный токен).
  *
@@ -340,6 +387,67 @@ function cfSetCustomRules($pdo, $email, $apiKey, $zoneId, $rules, $proxies = [],
 }
 
 /**
+ * Добавляет правило в произвольную фазу Rulesets (GET entrypoint -> append -> PUT).
+ * Используется для http_request_dynamic_redirect (Single/Dynamic Redirect — замена Page Rules).
+ *
+ * @param string $phase напр. 'http_request_dynamic_redirect'
+ * @return array ['success'=>bool, 'error'=>string|null]
+ */
+function cfAddRuleToPhase($pdo, $email, $apiKey, $zoneId, $phase, $rule, $proxies = [], $userId = null) {
+    $get = cloudflareApiRequestDetailed($pdo, $email, $apiKey, "zones/$zoneId/rulesets/phases/$phase/entrypoint", 'GET', [], $proxies, $userId);
+    $rules = [];
+    if ($get['success']) {
+        $data = $get['data'];
+        $raw = is_object($data) ? ($data->rules ?? []) : ($data['rules'] ?? []);
+        foreach ($raw as $r) {
+            $arr = json_decode(json_encode($r), true);
+            $rules[] = [
+                'action' => $arr['action'] ?? 'redirect',
+                'expression' => $arr['expression'] ?? 'true',
+                'description' => $arr['description'] ?? '',
+                'enabled' => array_key_exists('enabled', $arr) ? (bool)$arr['enabled'] : true,
+                'action_parameters' => $arr['action_parameters'] ?? null,
+            ];
+        }
+    } elseif (($get['http_code'] ?? 0) != 404) {
+        return ['success' => false, 'error' => cfReadableError($get)];
+    }
+    // Убираем null action_parameters (PUT не любит)
+    foreach ($rules as &$rr) { if ($rr['action_parameters'] === null) unset($rr['action_parameters']); }
+    unset($rr);
+    $rules[] = $rule;
+
+    $put = cloudflareApiRequestDetailed($pdo, $email, $apiKey, "zones/$zoneId/rulesets/phases/$phase/entrypoint", 'PUT', ['rules' => array_values($rules)], $proxies, $userId);
+    if (!$put['success']) {
+        return ['success' => false, 'error' => cfReadableError($put)];
+    }
+    return ['success' => true, 'error' => null];
+}
+
+/**
+ * Single/Dynamic Redirect (301/302) через Rulesets — современная замена Page Rules forwarding_url.
+ *
+ * @param string $expression условие (по хосту/пути)
+ * @param string $targetUrl полный целевой URL
+ */
+function cfAddRedirectRule($pdo, $email, $apiKey, $zoneId, $expression, $targetUrl, $description, $statusCode = 301, $preserveQuery = false, $proxies = [], $userId = null) {
+    $rule = [
+        'action' => 'redirect',
+        'expression' => $expression,
+        'description' => $description,
+        'enabled' => true,
+        'action_parameters' => [
+            'from_value' => [
+                'status_code' => (int)$statusCode,
+                'target_url' => ['value' => $targetUrl],
+                'preserve_query_string' => (bool)$preserveQuery,
+            ],
+        ],
+    ];
+    return cfAddRuleToPhase($pdo, $email, $apiKey, $zoneId, 'http_request_dynamic_redirect', $rule, $proxies, $userId);
+}
+
+/**
  * Аналитика зоны через GraphQL API (легаси zones/:id/analytics/dashboard отключён CF).
  * Возвращает дневную статистику запросов/трафика/угроз за N дней.
  *
@@ -348,8 +456,15 @@ function cfSetCustomRules($pdo, $email, $apiKey, $zoneId, $rules, $proxies = [],
 function cfZoneAnalyticsGraphQL($pdo, $email, $apiKey, $zoneId, $days = 7, $proxies = [], $userId = null, $authType = null) {
     $since = gmdate('Y-m-d', time() - $days * 86400);
     $until = gmdate('Y-m-d');
-    $query = 'query($zone:String!,$since:Date!,$until:Date!){viewer{zones(filter:{zoneTag:$zone}){httpRequests1dGroups(limit:60,filter:{date_geq:$since,date_leq:$until},orderBy:[date_ASC]){dimensions{date}sum{requests bytes threats}uniq{uniques}}}}}';
-    $body = ['query' => $query, 'variables' => ['zone' => $zoneId, 'since' => $since, 'until' => $until]];
+    // Adaptive-датасет (страны) на free-плане ограничен окном в 1 день — берём последние 24ч
+    $sinceT = gmdate('Y-m-d\TH:i:s\Z', time() - 86400);
+    $untilT = gmdate('Y-m-d\TH:i:s\Z');
+    // Комбинированный запрос: дневные итоги + топ-страны
+    $query = 'query($zone:String!,$since:Date!,$until:Date!,$sinceT:Time!,$untilT:Time!){viewer{zones(filter:{zoneTag:$zone}){'
+        . 'daily: httpRequests1dGroups(limit:60,filter:{date_geq:$since,date_leq:$until},orderBy:[date_ASC]){dimensions{date}sum{requests bytes threats}uniq{uniques}}'
+        . ' countries: httpRequestsAdaptiveGroups(limit:8,filter:{datetime_geq:$sinceT,datetime_leq:$untilT},orderBy:[count_DESC]){count dimensions{clientCountryName}}'
+        . '}}}';
+    $body = ['query' => $query, 'variables' => ['zone' => $zoneId, 'since' => $since, 'until' => $until, 'sinceT' => $sinceT, 'untilT' => $untilT]];
 
     // GraphQL — отдельный endpoint (не /zones/...). Используем общий низкоуровневый запрос.
     list($headers) = cfBuildAuthHeaders($email, $apiKey, $authType);
@@ -382,7 +497,12 @@ function cfZoneAnalyticsGraphQL($pdo, $email, $apiKey, $zoneId, $days = 7, $prox
         return ['success' => false, 'days' => [], 'totals' => [], 'error' => $msg];
     }
 
-    $groups = $decoded['data']['viewer']['zones'][0]['httpRequests1dGroups'] ?? [];
+    $zoneData = $decoded['data']['viewer']['zones'][0] ?? [];
+    $groups = $zoneData['daily'] ?? [];
+    $countriesOut = [];
+    foreach (($zoneData['countries'] ?? []) as $c) {
+        $countriesOut[] = ['country' => $c['dimensions']['clientCountryName'] ?? '??', 'count' => $c['count'] ?? 0];
+    }
     $daysOut = [];
     $tReq = 0; $tBytes = 0; $tThreats = 0;
     foreach ($groups as $g) {
@@ -402,6 +522,7 @@ function cfZoneAnalyticsGraphQL($pdo, $email, $apiKey, $zoneId, $days = 7, $prox
         'success' => true,
         'days' => $daysOut,
         'totals' => ['requests' => $tReq, 'bytes' => $tBytes, 'threats' => $tThreats],
+        'countries' => $countriesOut,
         'error' => null,
     ];
 }
@@ -469,9 +590,23 @@ function cloudflareApiRequestDetailed($pdo, $email, $apiKey, $endpoint, $method 
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
         if ($data) curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
     }
-    
-    $response = curl_exec($ch);
-    $result['http_code'] = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+    // Лёгкая страховка от rate-limit: ретрай на HTTP 429 с экспоненциальной паузой.
+    $maxRetries = 3;
+    for ($attempt = 0; ; $attempt++) {
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        if ($httpCode != 429 || $attempt >= $maxRetries) {
+            break;
+        }
+        $wait = 1 << $attempt; // 1,2,4с
+        if (preg_match('/retry-after:\s*(\d+)/i', (string)$response, $m)) {
+            $wait = max($wait, min((int)$m[1], 30));
+        }
+        if ($userId) logAction($pdo, $userId, "API Rate Limited (429)", "Endpoint: $endpoint, retry in {$wait}s (attempt " . ($attempt + 1) . ")");
+        sleep($wait);
+    }
+    $result['http_code'] = $httpCode;
     $result['curl_error'] = curl_error($ch);
     $result['raw_response'] = $response;
     curl_close($ch);
