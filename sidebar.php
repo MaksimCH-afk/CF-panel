@@ -19,6 +19,11 @@ $currentPage = basename($_SERVER['PHP_SELF']);
             <span>Дашборд</span>
         </a>
 
+        <a href="<?php echo BASE_PATH; ?>master_token.php" class="sidebar-link <?php echo $currentPage == 'master_token.php' ? 'active' : ''; ?>">
+            <i class="fas fa-key"></i>
+            <span>Мастер-токен</span>
+        </a>
+
         <a href="<?php echo BASE_PATH; ?>health.php" class="sidebar-link <?php echo $currentPage == 'health.php' ? 'active' : ''; ?>">
             <i class="fas fa-heart-pulse"></i>
             <span>Здоровье</span>

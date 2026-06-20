@@ -761,26 +761,32 @@ function deployWorker() {
 
 // Получить область применения
 function getScope(prefix) {
-    const scopeValue = $(`#${prefix}Scope`).val();
+    const $scopeEl = $(`#${prefix}Scope`);
+    const scopeValue = $scopeEl.val();
+    // ВАЖНО: ограничиваем выбор доменов ТЕКУЩЕЙ вкладкой. Раньше брались
+    // .domain-checkbox со всей страницы — из-за этого галочка, поставленная в
+    // другой вкладке (напр. «Блокировка ботов»), «протекала» в «Только Google».
+    const $pane = $scopeEl.closest('.tab-pane');
+    const $boxes = $pane.length ? $pane.find('.domain-checkbox') : $('.domain-checkbox');
     let result = {
         type: scopeValue,
         count: 0,
         groupId: null,
         domainIds: []
     };
-    
+
     if (scopeValue === 'all') {
-        result.count = $('.domain-checkbox').length;
+        result.count = $boxes.length;
     } else if (scopeValue === 'group') {
         result.groupId = $(`#${prefix}Group`).val();
-        result.count = $(`.domain-checkbox[data-group="${result.groupId}"]`).length || 0;
+        result.count = $boxes.filter(`[data-group="${result.groupId}"]`).length || 0;
     } else if (scopeValue === 'selected') {
-        result.domainIds = $('.domain-checkbox:checked').map(function() {
+        result.domainIds = $boxes.filter(':checked').map(function() {
             return $(this).val();
         }).get();
         result.count = result.domainIds.length;
     }
-    
+
     return result;
 }
 
