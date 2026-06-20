@@ -75,6 +75,18 @@ function cfMasterApi($token, $method, $path, $body = null) {
 }
 function cfErr($r) { return $r['errors'][0]['message'] ?? 'неизвестная ошибка'; }
 
+/** Возвращает значение мастер-токена: из сохранённого (master_id) или введённого (master_token). */
+function resolveMasterToken($pdo) {
+    $mid = trim($_POST['master_id'] ?? '');
+    if ($mid !== '' && ctype_digit($mid)) {
+        $st = $pdo->prepare("SELECT token FROM master_tokens WHERE id = ?");
+        $st->execute([$mid]);
+        $t = $st->fetchColumn();
+        if ($t) return $t;
+    }
+    return trim($_POST['master_token'] ?? '');
+}
+
 try {
     switch ($action) {
         case 'list_permissions':
@@ -82,7 +94,7 @@ try {
             break;
 
         case 'create':
-            $master   = trim($_POST['master_token'] ?? '');
+            $master   = resolveMasterToken($pdo);
             $name     = trim($_POST['name'] ?? '');
             $selected = $_POST['perms'] ?? [];
             if (!is_array($selected)) $selected = [];
@@ -133,19 +145,72 @@ try {
             }
 
             logAction($pdo, $userId, 'Master Token: создан токен', "Имя: {$name}, прав: " . count($selected) . ($missing ? "; не найдены: " . implode(', ', $missing) : ''));
+
+            // Если создавали из СОХРАНЁННОГО мастера — подтянем домены новым child-токеном
+            // (у него есть Zone Read) и привяжем подсказку к мастеру. Сам мастер зоны не видит.
+            $mid = trim($_POST['master_id'] ?? '');
+            $newToken = $res['result']['value'] ?? null;
+            if ($mid !== '' && ctype_digit($mid) && $newToken) {
+                $z = cfMasterApi($newToken, 'GET', 'zones?per_page=50');
+                if (!empty($z['success'])) {
+                    $names = array_map(function ($zone) { return $zone['name']; }, $z['result']);
+                    $total = $z['result_info']['total_count'] ?? count($names);
+                    $hint = $total . ' доменов: ' . implode(', ', array_slice($names, 0, 6)) . (count($names) > 6 ? '…' : '');
+                    $pdo->prepare("UPDATE master_tokens SET domains_hint = ? WHERE id = ?")->execute([$hint, $mid]);
+                }
+            }
+
             echo json_encode([
                 'success' => true,
-                'token'   => $res['result']['value'] ?? null,
+                'token'   => $newToken,
                 'id'      => $res['result']['id'] ?? null,
                 'name'    => $name,
                 'missing' => $missing,
             ]);
             break;
 
+        case 'add_master':
+            $tok   = trim($_POST['master_token'] ?? '');
+            $label = trim($_POST['label'] ?? '');
+            if ($tok === '') throw new Exception('Вставьте мастер-токен');
+            // Проверяем валидность токена
+            $v = cfMasterApi($tok, 'GET', 'user/tokens/verify');
+            if (empty($v['success'])) throw new Exception('Токен недействителен: ' . cfErr($v));
+            // Пытаемся узнать email аккаунта (если у токена есть доступ — иначе пусто)
+            $email = '';
+            $u = cfMasterApi($tok, 'GET', 'user');
+            if (!empty($u['success'])) $email = $u['result']['email'] ?? '';
+            if ($label === '') $label = $email ?: ('master-' . date('Ymd-His'));
+            $pdo->prepare("INSERT INTO master_tokens (label, token, account_email) VALUES (?, ?, ?)")->execute([$label, $tok, $email]);
+            logAction($pdo, $userId, 'Master Token: сохранён мастер', "label: {$label}");
+            echo json_encode(['success' => true]);
+            break;
+
+        case 'list_masters':
+            $rows = $pdo->query("SELECT id, label, account_email, domains_hint, token FROM master_tokens ORDER BY id DESC")->fetchAll();
+            $out = array_map(function ($r) {
+                return [
+                    'id' => $r['id'],
+                    'label' => $r['label'],
+                    'email' => $r['account_email'],
+                    'domains_hint' => $r['domains_hint'],
+                    'masked' => mb_substr($r['token'], 0, 10) . '…' . mb_substr($r['token'], -4),
+                ];
+            }, $rows);
+            echo json_encode(['success' => true, 'masters' => $out]);
+            break;
+
+        case 'delete_master':
+            $mid = trim($_POST['id'] ?? '');
+            if ($mid === '' || !ctype_digit($mid)) throw new Exception('Не указан id');
+            $pdo->prepare("DELETE FROM master_tokens WHERE id = ?")->execute([$mid]);
+            echo json_encode(['success' => true]);
+            break;
+
         case 'list_groups':
             // DEBUG: показать группы прав, относящиеся к редиректам/трансформам —
             // чтобы найти точное имя группы Single Redirect в этом аккаунте.
-            $master = trim($_POST['master_token'] ?? '');
+            $master = resolveMasterToken($pdo);
             if ($master === '') throw new Exception('Укажите мастер-токен');
             $pg = cfMasterApi($master, 'GET', 'user/tokens/permission_groups');
             if (empty($pg['success'])) throw new Exception('Не удалось получить группы: ' . cfErr($pg));
@@ -164,7 +229,7 @@ try {
             break;
 
         case 'list_tokens':
-            $master = trim($_POST['master_token'] ?? '');
+            $master = resolveMasterToken($pdo);
             if ($master === '') throw new Exception('Укажите мастер-токен');
             $res = cfMasterApi($master, 'GET', 'user/tokens?per_page=50');
             if (empty($res['success'])) throw new Exception('Не удалось получить список токенов: ' . cfErr($res));
@@ -189,7 +254,7 @@ try {
             break;
 
         case 'delete_token':
-            $master = trim($_POST['master_token'] ?? '');
+            $master = resolveMasterToken($pdo);
             $tokenId = trim($_POST['token_id'] ?? '');
             if ($master === '')  throw new Exception('Укажите мастер-токен');
             if ($tokenId === '') throw new Exception('Не указан id токена');

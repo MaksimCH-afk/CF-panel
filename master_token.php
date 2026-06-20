@@ -16,8 +16,19 @@ include 'sidebar.php';
                 <div class="card-body">
                     <div class="mb-3">
                         <label class="form-label">Мастер-токен <span class="text-muted small">(с правом «Create Additional Tokens»)</span></label>
-                        <input type="password" id="masterToken" class="form-control" placeholder="cf...   — вставьте мастер-токен" autocomplete="off">
-                        <div class="form-text">Используется только для запроса к Cloudflare и <strong>не сохраняется</strong> в панели.</div>
+                        <div class="input-group">
+                            <select id="masterSelect" class="form-select" onchange="onMasterChange()">
+                                <option value="__new__">➕ Добавить новый мастер-токен…</option>
+                            </select>
+                            <button class="btn btn-outline-danger" id="delMasterBtn" type="button" onclick="deleteMaster()" style="display:none;" title="Удалить сохранённый мастер-токен"><i class="fas fa-trash"></i></button>
+                        </div>
+                        <div id="masterHint" class="form-text"></div>
+                        <div id="addMasterBlock" class="border rounded p-2 mt-2 bg-light">
+                            <input type="password" id="masterToken" class="form-control form-control-sm mb-2" placeholder="cf… — вставьте мастер-токен" autocomplete="off">
+                            <input type="text" id="masterLabel" class="form-control form-control-sm mb-2" placeholder="Метка (напр. имя аккаунта / основной домен)">
+                            <button class="btn btn-outline-primary btn-sm" type="button" onclick="saveMaster()"><i class="fas fa-save me-1"></i>Сохранить мастер-токен</button>
+                            <div class="form-text mb-0">Хранится в БД панели (gitignored, права 0600). Список доменов подтянется сам после создания первого токена.</div>
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Имя нового токена</label>
@@ -92,6 +103,56 @@ include 'sidebar.php';
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script>
 let PRESET = [];
+let MASTERS = [];
+function loadMasters() {
+    $.get('master_token_api.php', { action: 'list_masters' }, function(r) {
+        MASTERS = (r && r.masters) ? r.masters : [];
+        const sel = $('#masterSelect');
+        const cur = sel.val();
+        let html = '';
+        MASTERS.forEach(function(m){
+            const lbl = m.label + (m.email ? ' (' + m.email + ')' : '');
+            html += `<option value="${m.id}">${$('<div>').text(lbl).html()}</option>`;
+        });
+        html += '<option value="__new__">➕ Добавить новый мастер-токен…</option>';
+        sel.html(html);
+        if (MASTERS.length && (!cur || cur === '__new__')) sel.val(String(MASTERS[0].id));
+        onMasterChange();
+    }, 'json');
+}
+function onMasterChange() {
+    const v = $('#masterSelect').val();
+    if (v === '__new__') {
+        $('#addMasterBlock').show(); $('#delMasterBtn').hide(); $('#masterHint').text('');
+    } else {
+        $('#addMasterBlock').hide(); $('#delMasterBtn').show();
+        const m = MASTERS.find(x => String(x.id) === String(v));
+        $('#masterHint').html(m ? ((m.domains_hint || 'домены подтянутся после создания токена') + ' · <code>' + m.masked + '</code>') : '');
+    }
+}
+function masterParam() {
+    const v = $('#masterSelect').val();
+    if (v && v !== '__new__') return { master_id: v };
+    const t = $('#masterToken').val().trim();
+    return t ? { master_token: t } : null;
+}
+function saveMaster() {
+    const t = $('#masterToken').val().trim();
+    if (!t) { showToast('Вставьте мастер-токен', 'warning'); return; }
+    $.post('master_token_api.php', { action: 'add_master', master_token: t, label: $('#masterLabel').val().trim() }, function(r) {
+        if (r.success) { showToast('Мастер-токен сохранён', 'success'); $('#masterToken').val(''); $('#masterLabel').val(''); loadMasters(); }
+        else showToast('Ошибка: ' + (r.error || ''), 'error');
+    }, 'json').fail(function(){ showToast('Ошибка соединения', 'error'); });
+}
+function deleteMaster() {
+    const v = $('#masterSelect').val();
+    if (!v || v === '__new__') return;
+    if (!confirm('Удалить сохранённый мастер-токен из панели? (в Cloudflare он не трогается)')) return;
+    $.post('master_token_api.php', { action: 'delete_master', id: v }, function(r) {
+        if (r.success) { showToast('Удалён', 'success'); loadMasters(); }
+        else showToast('Ошибка', 'error');
+    }, 'json');
+}
 function loadPerms() {
     $.get('master_token_api.php', { action: 'list_permissions' }, function(r) {
         if (!r.success) { $('#permsList').html('<div class="text-danger small">Ошибка загрузки</div>'); return; }
@@ -109,10 +170,10 @@ function loadPerms() {
 }
 function toggleAllPerms(on) { $('.perm-cb').prop('checked', on); }
 function debugGroups() {
-    const master = $('#masterToken').val().trim();
-    if (!master) { showToast('Вставьте мастер-токен сверху', 'warning'); return; }
+    const mp = masterParam();
+    if (!mp) { showToast('Выберите или вставьте мастер-токен', 'warning'); return; }
     $('#debugGroupsOut').html('<i class="fas fa-spinner fa-spin"></i> Загрузка…');
-    $.post('master_token_api.php', { action: 'list_groups', master_token: master }, function(r) {
+    $.post('master_token_api.php', Object.assign({ action: 'list_groups' }, mp), function(r) {
         if (!r.success) { $('#debugGroupsOut').html('<span class="text-danger">' + (r.error || 'ошибка') + '</span>'); return; }
         if (!r.matched.length) { $('#debugGroupsOut').html('<span class="text-muted">Групп с redirect/transform/url не найдено (всего групп: ' + r.total + ')</span>'); return; }
         let html = '<div class="border rounded p-2 bg-light"><b>Найдены группы (всего ' + r.total + '):</b><ul class="mb-0 ps-3">';
@@ -127,20 +188,21 @@ function copyToken() {
     showToast('Токен скопирован', 'success');
 }
 function createToken() {
-    const master = $('#masterToken').val().trim();
-    if (!master) { showToast('Вставьте мастер-токен', 'warning'); return; }
+    const mp = masterParam();
+    if (!mp) { showToast('Выберите или вставьте мастер-токен', 'warning'); return; }
     const perms = $('.perm-cb:checked').map(function(){ return this.value; }).get();
     if (!perms.length) { showToast('Выберите хотя бы одно право', 'warning'); return; }
     const $btn = $('#createBtn');
     $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-2"></i>Создаём…');
     $.ajax({
         url: 'master_token_api.php', method: 'POST', dataType: 'json', timeout: 40000,
-        data: { action: 'create', master_token: master, name: $('#tokenName').val().trim(), perms: perms }
+        data: Object.assign({ action: 'create', name: $('#tokenName').val().trim(), perms: perms }, mp)
     }).done(function(r) {
         if (r.success) {
             $('#newToken').val(r.token || '');
             $('#missingWarn').html(r.missing && r.missing.length ? ('Не найдены группы: ' + r.missing.join(', ')) : '');
             $('#resultCard').show();
+            loadMasters();
             showToast('Токен создан', 'success');
         } else {
             showToast('Ошибка: ' + (r.error || 'unknown'), 'error');
@@ -152,11 +214,11 @@ function createToken() {
     });
 }
 function loadTokens() {
-    const master = $('#masterToken').val().trim();
-    if (!master) { showToast('Сначала вставьте мастер-токен сверху', 'warning'); return; }
+    const mp = masterParam();
+    if (!mp) { showToast('Выберите или вставьте мастер-токен сверху', 'warning'); return; }
     $('#tokensList').html('<div class="text-muted small"><i class="fas fa-spinner fa-spin me-1"></i>Загрузка…</div>');
     $.ajax({ url: 'master_token_api.php', method: 'POST', dataType: 'json', timeout: 30000,
-        data: { action: 'list_tokens', master_token: master } })
+        data: Object.assign({ action: 'list_tokens' }, mp) })
     .done(function(r) {
         if (!r.success) { $('#tokensList').html('<div class="text-danger small">' + (r.error || 'Ошибка') + '</div>'); return; }
         if (!r.tokens.length) { $('#tokensList').html('<div class="text-muted small">Токенов нет.</div>'); return; }
@@ -178,16 +240,16 @@ function loadTokens() {
 }
 function deleteToken(id, btn) {
     if (!confirm('Удалить этот токен безвозвратно? Все интеграции на нём перестанут работать.')) return;
-    const master = $('#masterToken').val().trim();
+    const mp = masterParam();
     $(btn).prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i>');
     $.ajax({ url: 'master_token_api.php', method: 'POST', dataType: 'json', timeout: 20000,
-        data: { action: 'delete_token', master_token: master, token_id: id } })
+        data: Object.assign({ action: 'delete_token', token_id: id }, mp) })
     .done(function(r) {
         if (r.success) { showToast('Токен удалён', 'success'); loadTokens(); }
         else { showToast('Ошибка: ' + (r.error || 'unknown'), 'error'); $(btn).prop('disabled', false).html('<i class="fas fa-trash"></i>'); }
     })
     .fail(function(){ showToast('Ошибка соединения', 'error'); $(btn).prop('disabled', false).html('<i class="fas fa-trash"></i>'); });
 }
-$(document).ready(loadPerms);
+$(document).ready(function(){ loadPerms(); loadMasters(); });
 </script>
 <?php include 'footer.php'; ?>
