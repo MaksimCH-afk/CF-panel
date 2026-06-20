@@ -562,8 +562,8 @@ function cloudflareApiRequestDetailed($pdo, $email, $apiKey, $endpoint, $method 
     $result['auth_method'] = $authMethod;
 
     curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 15);          // жёсткий потолок на 1 вызов к CF
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     

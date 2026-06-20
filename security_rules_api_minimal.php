@@ -15,6 +15,11 @@ header('Content-Type: application/json; charset=utf-8');
 try {
     require_once 'config.php';
     require_once 'functions.php';
+    // Освобождаем session-lock: длинные операции (CF API) не должны держать сессию
+    // и блокировать другие запросы браузера.
+    if (session_status() === PHP_SESSION_ACTIVE) { session_write_close(); }
+    // Чтобы запрос не висел дольше клиентского таймаута (CF-вызовы и так ограничены).
+    @set_time_limit(55);
 } catch (Throwable $e) {
     http_response_code(500);
     echo json_encode([
