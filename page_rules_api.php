@@ -83,25 +83,36 @@ try {
         // ПРЕСЕТ 1: 301-редирект через Single/Dynamic Redirect (Rulesets) — замена Page Rules.
         // Поддерживает: страница -> страница (любые сайты) и весь сайт -> одна страница другого сайта.
         case 'redirect_301':
-            $target = trim($_POST['target'] ?? '');           // куда редиректим (полный URL)
-            $source = trim($_POST['source'] ?? '');           // исходный путь (пусто = весь сайт)
-            $whole  = empty($source) || $source === '/' || $source === '/*';
-            if ($target === '') throw new Exception('Укажите целевой URL (target)');
+            $target   = trim($_POST['target'] ?? '');          // «Куда»: путь (relative) или полный URL (absolute)
+            $source   = trim($_POST['source'] ?? '');          // исходный путь (пусто = весь сайт)
+            $mode     = ($_POST['mode'] ?? 'absolute') === 'relative' ? 'relative' : 'absolute';
+            $preserve = ($_POST['preserve_query'] ?? '0') === '1';
+            $whole    = empty($source) || $source === '/' || $source === '/*';
+            if ($target === '') throw new Exception('Укажите «Куда» (target)');
 
             $host = $domain['domain'];
-            if ($whole) {
-                // Весь сайт -> указанный URL (например главная нового сайта)
-                $expr = '(http.host eq "' . addslashes($host) . '")';
-                $targetUrl = $target;
-                $desc = "301 весь сайт -> $target";
+
+            // Целевой URL по режиму:
+            //  - relative: «Куда» — путь на ЭТОМ ЖЕ домене → https://<host>/<path>
+            //  - absolute: «Куда» — уже полный URL (можно на другой сайт)
+            if ($mode === 'relative') {
+                $targetUrl = 'https://' . $host . '/' . ltrim($target, '/');
             } else {
-                // Конкретная страница -> конкретный URL
+                if (!preg_match('~^https?://~i', $target)) {
+                    throw new Exception('Для режима «на другой адрес» нужен полный URL (https://…)');
+                }
+                $targetUrl = $target;
+            }
+
+            if ($whole) {
+                $expr = '(http.host eq "' . addslashes($host) . '")';
+                $desc = "301 весь сайт -> $targetUrl";
+            } else {
                 $src = '/' . ltrim($source, '/');
                 $expr = '(http.host eq "' . addslashes($host) . '" and http.request.uri.path eq "' . addslashes($src) . '")';
-                $targetUrl = $target;
-                $desc = "301 $src -> $target";
+                $desc = "301 $src -> $targetUrl";
             }
-            $res = cfAddRedirectRule($pdo, $domain['email'], $domain['api_key'], $zoneId, $expr, $targetUrl, $desc, 301, false, $proxies, $_SESSION['user_id']);
+            $res = cfAddRedirectRule($pdo, $domain['email'], $domain['api_key'], $zoneId, $expr, $targetUrl, $desc, 301, $preserve, $proxies, $_SESSION['user_id']);
             if (!$res['success']) throw new Exception('Не удалось применить редирект: ' . $res['error']);
             echo json_encode(['success' => true, 'message' => '301-редирект применён (Single Redirect Rule)']);
             exit;

@@ -76,22 +76,6 @@ include 'sidebar.php';
                         </button>
                     </div>
 
-                    <hr class="my-4">
-                    <h6 class="fw-bold mb-3"><i class="fas fa-arrow-right-arrow-left me-2 text-primary"></i>301 Редирект</h6>
-                    <div class="mb-2">
-                        <label class="form-label small mb-1">Откуда (путь). Пусто = весь сайт</label>
-                        <input type="text" id="redir301Source" class="form-control form-control-sm" placeholder="/old-page (пусто = весь сайт)">
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label small mb-1">Куда (полный URL)</label>
-                        <input type="text" id="redir301Target" class="form-control form-control-sm" placeholder="https://newsite.com/page или https://newsite.com/">
-                    </div>
-                    <button class="btn btn-outline-primary w-100" onclick="applyRedirect301()">
-                        <i class="fas fa-arrow-right-arrow-left me-2"></i>Применить 301 редирект
-                    </button>
-                    <div class="alert alert-secondary small mt-2 mb-0">
-                        <i class="fas fa-info-circle me-1"></i><strong>Как это работает:</strong> современное <strong>Single Redirect Rule</strong> (Rulesets, фаза <code>http_request_dynamic_redirect</code>) — пришло на смену устаревающим Page Rules. «Откуда» пусто = весь сайт уходит на указанный URL; иначе конкретная страница → конкретный URL (можно на другой сайт). Редирект на edge Cloudflare, сервер не трогает. <strong>404/410</strong> — через воркер-шаблоны (вкладка Cloudflare Workers).<br><span class="text-danger">Требует право токена «Dynamic URL Redirects» (Edit).</span>
-                    </div>
                 </div>
             </div>
         </div>
@@ -162,6 +146,60 @@ include 'sidebar.php';
         </div>
     </div>
     
+    <!-- 301 Редирект — отдельная секция -->
+    <div class="card mb-3">
+        <div class="card-header">
+            <i class="fas fa-arrow-right-arrow-left me-2 text-primary"></i>301 Редирект
+        </div>
+        <div class="card-body">
+            <p class="text-muted small">Использует выбранный сверху домен. Тип определяет, как трактуется поле «Куда».</p>
+
+            <!-- Переключатель режима -->
+            <div class="btn-group w-100 mb-3" role="group">
+                <input type="radio" class="btn-check" name="redirMode" id="redirModeRel" value="relative" checked onchange="updateRedirMode()">
+                <label class="btn btn-outline-primary" for="redirModeRel"><i class="fas fa-arrows-left-right-to-line me-1"></i>Внутри этого домена (путь → путь)</label>
+                <input type="radio" class="btn-check" name="redirMode" id="redirModeAbs" value="absolute" onchange="updateRedirMode()">
+                <label class="btn btn-outline-primary" for="redirModeAbs"><i class="fas fa-up-right-from-square me-1"></i>На другой адрес (полный URL)</label>
+            </div>
+
+            <div class="row g-2 align-items-end">
+                <div class="col-md-5">
+                    <label class="form-label small mb-1">Откуда (путь)</label>
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text redir-host-prefix">https://домен</span>
+                        <input type="text" id="redir301Source" class="form-control" placeholder="/en-au/ (пусто = весь сайт)">
+                    </div>
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label small mb-1" id="redirTargetLabel">Куда (путь на этом же домене)</label>
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text redir-host-prefix" id="redirTargetPrefix">https://домен</span>
+                        <input type="text" id="redir301Target" class="form-control" placeholder="/en-au2/">
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-primary btn-sm w-100" onclick="applyRedirect301()">
+                        <i class="fas fa-check me-1"></i>Применить
+                    </button>
+                </div>
+            </div>
+            <div class="form-check mt-2">
+                <input class="form-check-input" type="checkbox" id="redirPreserveQuery">
+                <label class="form-check-label small" for="redirPreserveQuery">Сохранять query-строку (<code>?utm=…</code> и т.п.)</label>
+            </div>
+
+            <div class="alert alert-secondary small mt-3 mb-0">
+                <i class="fas fa-info-circle me-1"></i><strong>Как это работает:</strong> современное <strong>Single Redirect Rule</strong> (Rulesets, фаза <code>http_request_dynamic_redirect</code>), на edge Cloudflare — сервер не трогается.
+                <ul class="mb-0 mt-1 ps-3">
+                    <li><strong>Внутри домена:</strong> пишешь только пути, напр. <code>/en-au/</code> → <code>/en-au2/</code> — домен подставляется сам.</li>
+                    <li><strong>На другой адрес:</strong> «Куда» — полный URL, можно на чужой сайт.</li>
+                    <li>«Откуда» пусто = весь сайт целиком уходит на «Куда». <strong>404/410</strong> — вкладка Cloudflare Workers.</li>
+                </ul>
+                <span class="text-danger">Требует право токена «Single Redirect» / «Dynamic URL Redirects» (Edit).</span>
+            </div>
+        </div>
+    </div>
+
     <!-- Operation Log -->
     <div class="card">
         <div class="card-header d-flex justify-content-between align-items-center">
@@ -196,17 +234,53 @@ function clearLog() {
     document.getElementById('operationLog').innerHTML = '<div class="text-muted">Лог очищен...</div>';
 }
 
+// Текущий домен в префиксах input-group + переключение режима
+function currentRedirHost() {
+    const select = document.getElementById('domainSelect');
+    const opt = select.options[select.selectedIndex];
+    return (opt && opt.dataset.domain) ? opt.dataset.domain : 'домен';
+}
+function updateRedirMode() {
+    const mode = document.querySelector('input[name="redirMode"]:checked').value;
+    const host = currentRedirHost();
+    // «Откуда» всегда путь на текущем домене
+    document.querySelectorAll('.redir-host-prefix').forEach(el => el.textContent = 'https://' + host);
+    const targetPrefix = document.getElementById('redirTargetPrefix');
+    const targetInput  = document.getElementById('redir301Target');
+    const targetLabel  = document.getElementById('redirTargetLabel');
+    if (mode === 'relative') {
+        targetPrefix.style.display = '';
+        targetLabel.textContent = 'Куда (путь на этом же домене)';
+        targetInput.placeholder = '/en-au2/';
+    } else {
+        targetPrefix.style.display = 'none';
+        targetLabel.textContent = 'Куда (полный URL, можно другой сайт)';
+        targetInput.placeholder = 'https://newsite.com/page';
+    }
+}
+document.addEventListener('DOMContentLoaded', function() {
+    updateRedirMode();
+    const ds = document.getElementById('domainSelect');
+    if (ds) ds.addEventListener('change', updateRedirMode);
+});
+
 async function applyRedirect301() {
     const select = document.getElementById('domainSelect');
     const domainId = select.value;
     if (!domainId) { showToast('Выберите домен', 'warning'); return; }
+    const mode = document.querySelector('input[name="redirMode"]:checked').value;
     const source = document.getElementById('redir301Source').value.trim();
     const target = document.getElementById('redir301Target').value.trim();
-    if (!target) { showToast('Укажите целевой URL', 'warning'); return; }
+    const preserveQuery = document.getElementById('redirPreserveQuery').checked ? '1' : '0';
+    if (!target) { showToast('Укажите «Куда»', 'warning'); return; }
+    if (mode === 'absolute' && !/^https?:\/\//i.test(target)) {
+        showToast('Для режима «на другой адрес» укажите полный URL (https://…)', 'warning'); return;
+    }
     const domainName = select.options[select.selectedIndex].dataset.domain;
-    logMessage(`Применяем 301 редирект для ${domainName} (${source || 'весь сайт'} → ${target})...`, 'info');
+    const shownTarget = (mode === 'relative') ? ('https://' + domainName + '/' + target.replace(/^\/+/, '')) : target;
+    logMessage(`Применяем 301 (${mode === 'relative' ? 'внутри домена' : 'на другой адрес'}) для ${domainName}: ${source || 'весь сайт'} → ${shownTarget} ...`, 'info');
     try {
-        const form = new URLSearchParams({ domain_id: domainId, rule_type: 'redirect_301', source, target });
+        const form = new URLSearchParams({ domain_id: domainId, rule_type: 'redirect_301', mode, source, target, preserve_query: preserveQuery });
         const response = await fetch('page_rules_api.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() });
         const data = await response.json();
         if (data.success) {
