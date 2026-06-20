@@ -27,8 +27,31 @@ function masterTokenPreset() {
         ['key' => 'account_analytics','label' => 'Account Analytics (Read)',     'cf' => 'Account Analytics Read',     'level' => 'account'],
         ['key' => 'zone_waf',         'label' => 'Zone WAF (Edit)',             'cf' => 'Zone WAF Write',             'level' => 'zone'],
         ['key' => 'analytics',        'label' => 'Analytics (Read)',            'cf' => 'Analytics Read',             'level' => 'zone'],
-        ['key' => 'single_redirect',  'label' => 'Single Redirect (Edit)',      'cf' => 'Single Redirect Write',      'level' => 'zone'],
+        // У Single Redirect имя группы в CF отличается от UI-метки. Несколько кандидатов
+        // + fuzzy-поиск (все ключевые слова должны встретиться в имени группы).
+        ['key' => 'single_redirect',  'label' => 'Single Redirect (Edit)',
+         'cf' => ['Single Redirect Write', 'Dynamic URL Redirect Write', 'Dynamic Redirect Write', 'Transform Rules Write'],
+         'match' => ['redirect', 'write'], 'level' => 'zone'],
     ];
+}
+
+/** Находит id группы права в списке CF: сперва по точным кандидатам, затем fuzzy по ключевым словам. */
+function matchPermissionGroupId($preset, $byName, $allGroups) {
+    foreach ((array)($preset['cf'] ?? []) as $cand) {
+        $k = mb_strtolower($cand);
+        if (isset($byName[$k])) return $byName[$k];
+    }
+    if (!empty($preset['match'])) {
+        foreach ($allGroups as $g) {
+            $n = mb_strtolower($g['name']);
+            $ok = true;
+            foreach ($preset['match'] as $kw) {
+                if (mb_strpos($n, mb_strtolower($kw)) === false) { $ok = false; break; }
+            }
+            if ($ok) return $g['id'];
+        }
+    }
+    return null;
 }
 
 /** Прямой вызов CF API мастер-токеном (отдельно от cloudflareApiRequest — там логика аккаунтов панели). */
@@ -82,7 +105,7 @@ try {
             foreach ($selected as $key) {
                 if (!isset($byKey[$key])) continue;
                 $p  = $byKey[$key];
-                $id = $byName[mb_strtolower($p['cf'])] ?? null;
+                $id = matchPermissionGroupId($p, $byName, $pg['result']);
                 if (!$id) { $missing[] = $p['label']; continue; }
                 if ($p['level'] === 'account') $accountGroups[] = ['id' => $id];
                 else                            $zoneGroups[]    = ['id' => $id];
@@ -114,6 +137,42 @@ try {
                 'name'    => $name,
                 'missing' => $missing,
             ]);
+            break;
+
+        case 'list_tokens':
+            $master = trim($_POST['master_token'] ?? '');
+            if ($master === '') throw new Exception('Укажите мастер-токен');
+            $res = cfMasterApi($master, 'GET', 'user/tokens?per_page=50');
+            if (empty($res['success'])) throw new Exception('Не удалось получить список токенов: ' . cfErr($res));
+            $tokens = [];
+            foreach ($res['result'] as $t) {
+                // Собираем имена групп прав по всем политикам токена
+                $perms = [];
+                foreach ($t['policies'] ?? [] as $pol) {
+                    foreach ($pol['permission_groups'] ?? [] as $g) {
+                        if (!empty($g['name'])) $perms[$g['name']] = true;
+                    }
+                }
+                $tokens[] = [
+                    'id'      => $t['id'],
+                    'name'    => $t['name'] ?? '(без имени)',
+                    'status'  => $t['status'] ?? '',
+                    'perms'   => array_keys($perms),
+                    'count'   => count($perms),
+                ];
+            }
+            echo json_encode(['success' => true, 'tokens' => $tokens]);
+            break;
+
+        case 'delete_token':
+            $master = trim($_POST['master_token'] ?? '');
+            $tokenId = trim($_POST['token_id'] ?? '');
+            if ($master === '')  throw new Exception('Укажите мастер-токен');
+            if ($tokenId === '') throw new Exception('Не указан id токена');
+            $res = cfMasterApi($master, 'DELETE', 'user/tokens/' . rawurlencode($tokenId));
+            if (empty($res['success'])) throw new Exception('Не удалось удалить токен: ' . cfErr($res));
+            logAction($pdo, $userId, 'Master Token: удалён токен', "id: {$tokenId}");
+            echo json_encode(['success' => true]);
             break;
 
         default:

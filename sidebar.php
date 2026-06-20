@@ -88,6 +88,11 @@ $currentPage = basename($_SERVER['PHP_SELF']);
             <i class="fas fa-server"></i>
             <span>Прокси</span>
         </a>
+
+        <a href="<?php echo BASE_PATH; ?>telegram.php" class="sidebar-link <?php echo $currentPage == 'telegram.php' ? 'active' : ''; ?>">
+            <i class="fab fa-telegram"></i>
+            <span>Telegram</span>
+        </a>
         
         <a href="<?php echo BASE_PATH; ?>logs.php" class="sidebar-link <?php echo $currentPage == 'logs.php' ? 'active' : ''; ?>">
             <i class="fas fa-history"></i>

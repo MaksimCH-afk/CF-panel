@@ -13,6 +13,43 @@ function logAction($pdo, $userId, $action, $details = '') {
     }
 }
 
+// === Telegram (инфраструктура; триггеры пока НЕ подключены) ===
+/** Читает настройки Telegram из app_settings. */
+function tgGetSettings($pdo) {
+    $out = ['bot_token' => '', 'chat_id' => ''];
+    try {
+        $stmt = $pdo->query("SELECT key, value FROM app_settings WHERE key IN ('telegram_bot_token','telegram_chat_id')");
+        foreach ($stmt as $r) {
+            if ($r['key'] === 'telegram_bot_token') $out['bot_token'] = $r['value'];
+            if ($r['key'] === 'telegram_chat_id')   $out['chat_id']   = $r['value'];
+        }
+    } catch (Exception $e) { /* таблицы может ещё не быть */ }
+    return $out;
+}
+/** Отправляет сообщение в Telegram через Bot API sendMessage. Возвращает ['ok'=>bool,'error'=>?]. */
+function tgSendMessage($pdo, $text, $chatId = null) {
+    $s = tgGetSettings($pdo);
+    if (empty($s['bot_token'])) return ['ok' => false, 'error' => 'не задан bot_token'];
+    $chat = $chatId ?: $s['chat_id'];
+    if (empty($chat)) return ['ok' => false, 'error' => 'не задан chat_id'];
+    $ch = curl_init("https://api.telegram.org/bot{$s['bot_token']}/sendMessage");
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 15,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => http_build_query([
+            'chat_id' => $chat,
+            'text' => $text,
+            'parse_mode' => 'HTML',
+            'disable_web_page_preview' => true,
+        ]),
+    ]);
+    $resp = json_decode(curl_exec($ch), true);
+    curl_close($ch);
+    if (!empty($resp['ok'])) return ['ok' => true];
+    return ['ok' => false, 'error' => $resp['description'] ?? 'ошибка Telegram API'];
+}
+
 function getRandomProxy($proxies) {
     return $proxies ? $proxies[array_rand($proxies)] : null;
 }

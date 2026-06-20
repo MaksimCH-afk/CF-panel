@@ -70,6 +70,18 @@ include 'sidebar.php';
             </div>
         </div>
     </div>
+
+    <!-- Управление существующими токенами -->
+    <div class="card mt-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="fas fa-list me-2"></i>Существующие токены</span>
+            <button class="btn btn-outline-secondary btn-sm" onclick="loadTokens()"><i class="fas fa-rotate me-1"></i>Загрузить список</button>
+        </div>
+        <div class="card-body">
+            <p class="text-muted small mb-2">Список токенов мастер-аккаунта. Можно удалить лишние/неполные и создать правильный сверху. Удаление необратимо.</p>
+            <div id="tokensList"><div class="text-muted small">Введите мастер-токен и нажмите «Загрузить список».</div></div>
+        </div>
+    </div>
 </div>
 
 <!-- jQuery нужен для AJAX (как в Security Manager); footer.php грузит только Bootstrap -->
@@ -121,6 +133,43 @@ function createToken() {
     }).always(function(){
         $btn.prop('disabled', false).html('<i class="fas fa-key me-2"></i>Создать токен');
     });
+}
+function loadTokens() {
+    const master = $('#masterToken').val().trim();
+    if (!master) { showToast('Сначала вставьте мастер-токен сверху', 'warning'); return; }
+    $('#tokensList').html('<div class="text-muted small"><i class="fas fa-spinner fa-spin me-1"></i>Загрузка…</div>');
+    $.ajax({ url: 'master_token_api.php', method: 'POST', dataType: 'json', timeout: 30000,
+        data: { action: 'list_tokens', master_token: master } })
+    .done(function(r) {
+        if (!r.success) { $('#tokensList').html('<div class="text-danger small">' + (r.error || 'Ошибка') + '</div>'); return; }
+        if (!r.tokens.length) { $('#tokensList').html('<div class="text-muted small">Токенов нет.</div>'); return; }
+        let html = '<div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>Имя</th><th>Права</th><th>Статус</th><th></th></tr></thead><tbody>';
+        r.tokens.forEach(function(t) {
+            const permsTitle = (t.perms || []).join(', ').replace(/"/g, '&quot;');
+            const badge = t.status === 'active' ? 'success' : 'secondary';
+            html += `<tr>
+                <td class="font-monospace small">${$('<div>').text(t.name).html()}</td>
+                <td><span class="badge bg-light text-dark" title="${permsTitle}">${t.count} прав</span></td>
+                <td><span class="badge bg-${badge}">${t.status}</span></td>
+                <td class="text-end"><button class="btn btn-outline-danger btn-sm" onclick="deleteToken('${t.id}', this)"><i class="fas fa-trash"></i></button></td>
+            </tr>`;
+        });
+        html += '</tbody></table></div>';
+        $('#tokensList').html(html);
+    })
+    .fail(function(x, st){ $('#tokensList').html('<div class="text-danger small">' + (st === 'timeout' ? 'Таймаут' : 'Ошибка соединения') + '</div>'); });
+}
+function deleteToken(id, btn) {
+    if (!confirm('Удалить этот токен безвозвратно? Все интеграции на нём перестанут работать.')) return;
+    const master = $('#masterToken').val().trim();
+    $(btn).prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i>');
+    $.ajax({ url: 'master_token_api.php', method: 'POST', dataType: 'json', timeout: 20000,
+        data: { action: 'delete_token', master_token: master, token_id: id } })
+    .done(function(r) {
+        if (r.success) { showToast('Токен удалён', 'success'); loadTokens(); }
+        else { showToast('Ошибка: ' + (r.error || 'unknown'), 'error'); $(btn).prop('disabled', false).html('<i class="fas fa-trash"></i>'); }
+    })
+    .fail(function(){ showToast('Ошибка соединения', 'error'); $(btn).prop('disabled', false).html('<i class="fas fa-trash"></i>'); });
 }
 $(document).ready(loadPerms);
 </script>

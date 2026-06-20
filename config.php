@@ -25,8 +25,8 @@ define('BASE_PATH', $basePath);
 define('ROOT_PATH', dirname(__FILE__) . '/');
 define('DB_PATH', ROOT_PATH . 'cloudflare_panel.db');
 
-// Версия панели (счётчик). Текущая — 16.0, следующие правки: 17.0, 18.0, ...
-define('PANEL_VERSION', '16.0');
+// Версия панели (счётчик). Текущая — 17.0, следующие правки: 18.0, 19.0, ...
+define('PANEL_VERSION', '17.0');
 
 // Перенаправление на HTTPS, если соединение не защищено (исключая localhost, CLI и API файлы)
 if (php_sapi_name() !== 'cli') {
@@ -331,6 +331,8 @@ try {
     foreach (['whois_dnssec TEXT', 'whois_abuse TEXT', 'whois_source TEXT'] as $col) {
         try { $pdo->exec("ALTER TABLE cloudflare_accounts ADD COLUMN $col DEFAULT NULL"); } catch (Exception $e) {}
     }
+    // Глобальные настройки панели (key-value): Telegram bot_token/chat_id и т.п.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)");
 
     try {
         $pdo->exec("UPDATE cloudflare_accounts SET updated_at = COALESCE(updated_at, created_at)");
