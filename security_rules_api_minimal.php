@@ -420,13 +420,19 @@ function applyReferrerOnly($pdo, $userId, $data) {
 
 // Распознаёт «Google-only» правило по смыслу (skip с Googlebot в UA, либо block всего сайта).
 // Нужно, чтобы повторное применение/отмена работали независимо от названия правила.
+// Точное распознавание ТОЛЬКО двух правил, которые создаёт сама функция «Только Google».
+// КРИТИЧНО: никаких широких подстрок (раньше любое block-правило с
+// starts_with(http.request.uri ... — например «block /admin» — ошибочно считалось
+// нашим и удалялось). Совпадение по точному описанию ИЛИ точному выражению нашего
+// шаблона. Любые ДРУГИЕ правила пользователя сохраняются.
 function isGoogleOnlyRule($r) {
-    $expr = $r['expression'] ?? '';
-    $act = $r['action'] ?? '';
+    $expr = trim($r['expression'] ?? '');
+    $act  = $r['action'] ?? '';
     $desc = $r['description'] ?? '';
-    if ($desc === 'Allow Google Bot' || $desc === 'Block all other') return true;
-    if ($act === 'skip' && stripos($expr, 'googlebot') !== false) return true;               // Allow Google Bot
-    if ($act === 'block' && strpos($expr, 'starts_with(http.request.uri') !== false) return true; // Block all other
+    $allowExpr = '(http.user_agent contains "Googlebot") or (http.user_agent contains "Google-") or (http.user_agent contains "-Google")';
+    $blockExpr = '(starts_with(http.request.uri, "/"))';
+    if ($act === 'skip'  && ($desc === 'Allow Google Bot' || $expr === $allowExpr)) return true;  // Allow Google Bot
+    if ($act === 'block' && ($desc === 'Block all other'  || $expr === $blockExpr)) return true;  // Block all other (catch-all)
     return false;
 }
 function isNotGoogleOnlyRule($r) { return !isGoogleOnlyRule($r); }
