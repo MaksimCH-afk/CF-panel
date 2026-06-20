@@ -169,7 +169,11 @@
         
         // Loading overlay
         function showLoading(element = null) {
-            if (element) {
+            // ВАЖНО: security_rules.js вызывает showLoading('текст-сообщение') со СТРОКОЙ.
+            // У строки нет .classList — без этой проверки тут вылетал TypeError,
+            // из-за которого ajax не отправлялся, а спиннер «Применяем…» висел вечно
+            // (ломало «Только Google», Geo/IP/Bot-блокировку). Принимаем только DOM-элемент.
+            if (element && element.classList) {
                 element.classList.add('loading');
                 element.setAttribute('disabled', 'true');
             }
@@ -192,7 +196,7 @@
         }
         
         function hideLoading(element = null) {
-            if (element) {
+            if (element && element.classList) {
                 element.classList.remove('loading');
                 element.removeAttribute('disabled');
             }
