@@ -604,6 +604,8 @@ $stats = $statsStmt->fetch();
                                     <li><strong>Block all other</strong> — <code>starts_with(http.request.uri, "/")</code> → <strong>Block</strong>. Ставится <u>последним</u>.</li>
                                 </ol>
                                 Работает «в комбе»: Google проходит, остальной трафик блокируется. Существующие custom-правила сохраняются между ними.
+                                <hr class="my-2">
+                                <strong>Где смотреть в Cloudflare:</strong> Security → WAF → <u>Custom rules</u> (не Page Rules и не старые Firewall rules).
                             </div>
                             <div class="alert alert-warning small mb-0">
                                 <i class="fas fa-triangle-exclamation me-1"></i>Это закроет сайт для всех, кроме Googlebot. Прямые посетители тоже будут заблокированы — применяйте осознанно (cloaking/тех. страницы).

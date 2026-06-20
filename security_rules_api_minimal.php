@@ -447,7 +447,8 @@ function applyOnlyGoogle($pdo, $userId, $data) {
         $stmt = $pdo->prepare("SELECT ca.domain, ca.zone_id, cc.email, cc.api_key, cc.auth_type FROM cloudflare_accounts ca JOIN cloudflare_credentials cc ON ca.account_id = cc.id WHERE ca.id = ? AND ca.user_id = ?");
         $stmt->execute([$domainId, $userId]);
         $domain = $stmt->fetch();
-        if (!$domain || !$domain['zone_id']) continue;
+        if (!$domain) { $errors[] = "ID $domainId: домен не найден"; continue; }
+        if (!$domain['zone_id']) { $errors[] = $domain['domain'] . ': нет zone_id (сначала синхронизируйте домен)'; continue; }
 
         // Текущие правила без наших двух (чтобы не дублировать при повторном применении)
         $current = cfGetCustomRuleset($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], $proxies, $userId);
@@ -474,7 +475,7 @@ function applyOnlyGoogle($pdo, $userId, $data) {
         'applied' => $applied,
         'total' => count($domainIds),
         'errors' => $errors,
-        'error' => $applied > 0 ? null : (implode('; ', $errors) ?: 'Не удалось применить (проверьте право токена Zone WAF)'),
+        'error' => $applied > 0 ? null : (implode('; ', $errors) ?: 'Не удалось применить'),
     ];
 }
 
@@ -492,7 +493,8 @@ function removeOnlyGoogle($pdo, $userId, $data) {
         $stmt = $pdo->prepare("SELECT ca.domain, ca.zone_id, cc.email, cc.api_key, cc.auth_type FROM cloudflare_accounts ca JOIN cloudflare_credentials cc ON ca.account_id = cc.id WHERE ca.id = ? AND ca.user_id = ?");
         $stmt->execute([$domainId, $userId]);
         $domain = $stmt->fetch();
-        if (!$domain || !$domain['zone_id']) continue;
+        if (!$domain) { $errors[] = "ID $domainId: домен не найден"; continue; }
+        if (!$domain['zone_id']) { $errors[] = $domain['domain'] . ': нет zone_id'; continue; }
 
         $current = cfGetCustomRuleset($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], $proxies, $userId);
         if ($current['error']) { $errors[] = $domain['domain'] . ': ' . $current['error']; continue; }
