@@ -211,7 +211,9 @@ function syncDomain($pdo, $userId) {
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_NOBODY => true,
-            CURLOPT_USERAGENT => 'Mozilla/5.0 CloudPanel/2.1'
+            // Googlebot-UA: домены, настроенные на «Только Google», пропустят проверку
+            // и покажут реальный статус, а не 403.
+            CURLOPT_USERAGENT => 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
         ]);
         
         // Добавляем прокси если есть (формат: IP:PORT@LOGIN:PASS)
@@ -234,8 +236,18 @@ function syncDomain($pdo, $userId) {
         curl_close($ch);
         
         $result['http_code'] = $httpCode;
-        $result['domain_status'] = $httpCode >= 200 && $httpCode < 400 ? 'online' : 'offline';
-        
+        // Классификация: 2xx/3xx — online; 401/403/429/503 — «защищён/ограничен»
+        // (домен жив, но доступ ограничен правилами); прочее — offline.
+        if ($httpCode >= 200 && $httpCode < 400) {
+            $result['domain_status'] = 'online';
+        } elseif (in_array($httpCode, [401, 403, 429, 503], true)) {
+            $result['domain_status'] = 'protected';
+        } elseif ($httpCode === 0) {
+            $result['domain_status'] = 'offline';
+        } else {
+            $result['domain_status'] = 'offline';
+        }
+
     } catch (Exception $e) {
         $result['errors'][] = 'HTTP: ' . $e->getMessage();
         $result['http_code'] = 0;

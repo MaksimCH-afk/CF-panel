@@ -635,8 +635,11 @@ $stats = $statsStmt->fetch();
                                     </div>
                                 <?php endforeach; ?>
                             </div>
-                            <button class="btn btn-danger w-100" onclick="applyOnlyGoogle()">
+                            <button class="btn btn-danger w-100 mb-2" onclick="applyOnlyGoogle()">
                                 <i class="fab fa-google me-2"></i>Применить «Только Google»
+                            </button>
+                            <button class="btn btn-outline-secondary w-100" onclick="removeOnlyGoogle()">
+                                <i class="fas fa-rotate-left me-2"></i>Отключить (удалить 2 правила)
                             </button>
                         </div>
                     </div>

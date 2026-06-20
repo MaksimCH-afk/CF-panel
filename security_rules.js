@@ -457,6 +457,21 @@ function applyOnlyGoogle() {
     });
 }
 
+// Отключить «Только Google» (удалить 2 правила)
+function removeOnlyGoogle() {
+    const scope = getScope('onlyGoogle');
+    if (!scope.count) { showError('Не выбраны домены'); return; }
+    if (!confirm(`Отключить «Только Google» на ${scope.count} доменах? (удалятся правила Allow Google Bot + Block all other)`)) return;
+    showLoading('Отключение…');
+    $.post('security_rules_api_minimal.php', { action: 'remove_only_google', scope: scope })
+    .done(function(r) {
+        hideLoading();
+        if (r.success) { showSuccess(`Отключено на ${r.applied} доменах`); setTimeout(() => location.reload(), 1500); }
+        else showError(r.error || 'Ошибка');
+    })
+    .fail(function(){ hideLoading(); showError('Ошибка соединения'); });
+}
+
 // Применить блокировку IP
 function applyIPBlocker() {
     const ips = $('#ipBlockList').val().split('\n').filter(ip => ip.trim());

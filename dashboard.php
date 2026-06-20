@@ -155,6 +155,10 @@ function getDomainStatusInfo($status, $httpCode = null) {
     if ($httpCodeInt !== null && $httpCodeInt >= 200 && $httpCodeInt < 400) {
         return ['name' => 'Online', 'class' => 'success', 'icon' => 'check-circle'];
     }
+    // 401/403/429/503 — домен жив, но доступ ограничен правилами («Только Google» и т.п.)
+    if (($httpCodeInt !== null && in_array($httpCodeInt, [401, 403, 429, 503], true)) || $status === 'protected') {
+        return ['name' => 'Защищён', 'class' => 'warning', 'icon' => 'shield-halved'];
+    }
     // HTTP коды ошибок 4xx и 5xx
     if ($httpCodeInt !== null && $httpCodeInt >= 400) {
         return ['name' => "HTTP $httpCodeInt", 'class' => 'danger', 'icon' => 'times-circle'];
@@ -413,10 +417,9 @@ function getDomainStatusInfo($status, $httpCode = null) {
                                         </button>
                                         <ul class="dropdown-menu dropdown-menu-end shadow">
                                             <li><h6 class="dropdown-header">Управление</h6></li>
-                                            <li><a class="dropdown-item" href="#" onclick="updateDNS(<?php echo $domain['id']; ?>)"><i class="fas fa-globe me-2 text-primary"></i>Обновить DNS (IP)</a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="syncDomainNow(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')"><i class="fas fa-rotate me-2 text-primary"></i>Синхронизировать (IP/SSL/статус)</a></li>
                                             <li><a class="dropdown-item" href="#" onclick="openDnsManager(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')"><i class="fas fa-list me-2 text-primary"></i>DNS записи (A/CNAME/TXT/MX)</a></li>
                                             <li><a class="dropdown-item" href="#" onclick="checkSSL(<?php echo $domain['id']; ?>)"><i class="fas fa-shield-alt me-2 text-success"></i>Проверить SSL</a></li>
-                                            <li><a class="dropdown-item" href="#" onclick="checkStatus(<?php echo $domain['id']; ?>)"><i class="fas fa-heartbeat me-2 text-danger"></i>Проверить статус</a></li>
                                             <li><a class="dropdown-item" href="#" onclick="purgeDomainCache(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')"><i class="fas fa-broom me-2 text-warning"></i>Очистить кэш</a></li>
                                             <li><a class="dropdown-item" href="#" onclick="openAnalytics(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')"><i class="fas fa-chart-line me-2 text-info"></i>Аналитика</a></li>
                                             <li><hr class="dropdown-divider"></li>
@@ -765,6 +768,19 @@ async function purgeDomainCache(id, name) {
         const res = await fetch('cache_api.php', { method: 'POST', headers: {'Content-Type':'application/x-www-form-urlencoded'}, body });
         const json = await res.json();
         showToast(json.success ? `Кэш очищен: ${name}` : (json.error || 'Не удалось очистить кэш'), json.success ? 'success' : 'error');
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+// Синхронная синхронизация одного домена: IP + SSL-режим + статус (показывает результат)
+async function syncDomainNow(id, name) {
+    showToast(`Синхронизация ${name}…`, 'info');
+    try {
+        const body = new URLSearchParams({ action: 'sync_domain', domain_id: id });
+        const res = await fetch('sync_domains_api.php', { method: 'POST', headers: {'Content-Type':'application/x-www-form-urlencoded'}, body });
+        const d = await res.json();
+        if (!d.success) { showToast(d.error || 'Ошибка синхронизации', 'error'); return; }
+        const st = d.domain_status === 'online' ? '🟢 online' : (d.domain_status === 'protected' ? '🛡 защищён' : '🔴 ' + (d.domain_status||'offline'));
+        showToast(`${name}: ${st}, SSL ${d.ssl_mode||'—'}, IP ${d.dns_ip||'—'}`, d.domain_status === 'offline' ? 'warning' : 'success');
+        setTimeout(() => location.reload(), 1500);
     } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
 }
 async function updateDNS(id) { await addTaskToQueue('update_dns_ip', [id], 'Обновление DNS'); }

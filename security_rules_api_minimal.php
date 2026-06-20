@@ -72,6 +72,11 @@ try {
             echo json_encode($result);
             break;
 
+        case 'remove_only_google':
+            $result = removeOnlyGoogle($pdo, $userId, $_POST);
+            echo json_encode($result);
+            break;
+
         case 'deploy_worker':
             $result = deployWorker($pdo, $userId, $_POST);
             echo json_encode($result);
@@ -464,7 +469,47 @@ function applyOnlyGoogle($pdo, $userId, $data) {
         }
     }
 
-    return ['success' => $applied > 0, 'applied' => $applied, 'total' => count($domainIds), 'errors' => $errors];
+    return [
+        'success' => $applied > 0,
+        'applied' => $applied,
+        'total' => count($domainIds),
+        'errors' => $errors,
+        'error' => $applied > 0 ? null : (implode('; ', $errors) ?: 'Не удалось применить (проверьте право токена Zone WAF)'),
+    ];
+}
+
+// Отмена «Только Google»: удаляет 2 правила (Allow Google Bot + Block all other).
+function removeOnlyGoogle($pdo, $userId, $data) {
+    $scope = $data['scope'] ?? [];
+    $domainIds = getScopeDomains($pdo, $userId, $scope);
+    if (empty($domainIds)) {
+        return ['success' => false, 'error' => 'Нет доменов для применения'];
+    }
+    $removed = 0;
+    $errors = [];
+    $proxies = getProxies($pdo, $userId);
+    foreach ($domainIds as $domainId) {
+        $stmt = $pdo->prepare("SELECT ca.domain, ca.zone_id, cc.email, cc.api_key, cc.auth_type FROM cloudflare_accounts ca JOIN cloudflare_credentials cc ON ca.account_id = cc.id WHERE ca.id = ? AND ca.user_id = ?");
+        $stmt->execute([$domainId, $userId]);
+        $domain = $stmt->fetch();
+        if (!$domain || !$domain['zone_id']) continue;
+
+        $current = cfGetCustomRuleset($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], $proxies, $userId);
+        if ($current['error']) { $errors[] = $domain['domain'] . ': ' . $current['error']; continue; }
+        $kept = array_values(array_filter($current['rules'], function ($r) {
+            $d = $r['description'] ?? '';
+            return $d !== 'Allow Google Bot' && $d !== 'Block all other';
+        }));
+        if (count($kept) === count($current['rules'])) { $removed++; continue; } // нечего удалять
+        $res = cfSetCustomRules($pdo, $domain['email'], $domain['api_key'], $domain['zone_id'], $kept, $proxies, $userId);
+        if ($res['success']) {
+            $removed++;
+            $pdo->prepare("DELETE FROM security_rules WHERE user_id = ? AND domain_id = ? AND rule_type = 'only_google'")->execute([$userId, $domainId]);
+        } else {
+            $errors[] = $domain['domain'] . ': ' . $res['error'];
+        }
+    }
+    return ['success' => $removed > 0, 'applied' => $removed, 'total' => count($domainIds), 'error' => $removed > 0 ? null : (implode('; ', $errors) ?: 'Не удалось отменить')];
 }
 
 function deployWorker($pdo, $userId, $data) {
