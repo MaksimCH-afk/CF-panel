@@ -46,8 +46,14 @@ $soonStmt = $pdo->prepare("SELECT domain, ssl_nearest_expiry FROM cloudflare_acc
 $soonStmt->execute([$userId]);
 $soonList = $soonStmt->fetchAll();
 
-// Недавние ошибки в логах
-$errStmt = $pdo->prepare("SELECT action, details, timestamp FROM logs WHERE user_id = ? AND (action LIKE '%Failed%' OR action LIKE '%Error%' OR action LIKE '%429%') ORDER BY id DESC LIMIT 30");
+// Недавние ошибки в логах. Исключаем безобидный 404 «could not find entrypoint ruleset»
+// — это не сбой, а признак того, что у домена ещё нет ни одного custom-правила
+// (Cloudflare так отвечает на пустой набор); выше по коду он обрабатывается штатно.
+$errStmt = $pdo->prepare("SELECT action, details, timestamp FROM logs
+    WHERE user_id = ?
+      AND (action LIKE '%Failed%' OR action LIKE '%Error%' OR action LIKE '%429%')
+      AND details NOT LIKE '%could not find entrypoint ruleset%'
+    ORDER BY id DESC LIMIT 30");
 $errStmt->execute([$userId]);
 $errors = $errStmt->fetchAll();
 
