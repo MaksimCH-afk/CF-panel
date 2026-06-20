@@ -326,6 +326,11 @@ try {
     } catch (Exception $e) {
         // Колонка уже существует
     }
+    // WHOIS/RDAP доп. поля (DNSSEC, abuse-контакт, источник данных) — глобально,
+    // чтобы whois_api.php работал и без предварительного захода на страницу WHOIS.
+    foreach (['whois_dnssec TEXT', 'whois_abuse TEXT', 'whois_source TEXT'] as $col) {
+        try { $pdo->exec("ALTER TABLE cloudflare_accounts ADD COLUMN $col DEFAULT NULL"); } catch (Exception $e) {}
+    }
 
     try {
         $pdo->exec("UPDATE cloudflare_accounts SET updated_at = COALESCE(updated_at, created_at)");
