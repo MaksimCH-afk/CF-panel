@@ -643,6 +643,7 @@ $stats = $statsStmt->fetch();
                             <button class="btn btn-outline-secondary w-100" onclick="removeOnlyGoogle()">
                                 <i class="fas fa-rotate-left me-2"></i>Отключить (удалить 2 правила)
                             </button>
+                            <div id="onlyGoogleResult" class="mt-3"></div>
                         </div>
                     </div>
                 </div>

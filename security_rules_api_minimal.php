@@ -465,8 +465,10 @@ function applyOnlyGoogle($pdo, $userId, $data) {
         if ($res['success']) {
             $applied++;
             saveSecurityRule($pdo, $userId, $domainId, 'only_google', json_encode(['rules' => 2]));
+            logAction($pdo, $userId, 'Only Google Applied', "Domain: {$domain['domain']}, zone: {$domain['zone_id']}, rules: " . count($rules));
         } else {
             $errors[] = $domain['domain'] . ': ' . $res['error'];
+            logAction($pdo, $userId, 'Only Google FAILED', "Domain: {$domain['domain']}, zone: {$domain['zone_id']}, error: {$res['error']}");
         }
     }
 

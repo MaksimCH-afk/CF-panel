@@ -159,7 +159,7 @@ include 'sidebar.php';
                                         </span>
                                     </td>
                                     <td>
-                                        <span class="text-truncate d-inline-block" style="max-width: 500px;" title="<?php echo htmlspecialchars($log['details'] ?? ''); ?>">
+                                        <span style="white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; font-size: 0.82rem;">
                                             <?php echo htmlspecialchars($log['details'] ?? '-'); ?>
                                         </span>
                                     </td>

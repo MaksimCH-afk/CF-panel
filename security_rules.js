@@ -437,6 +437,8 @@ function applyOnlyGoogle() {
     if (!confirm(`Применить «Только Google» к ${scope.count} доменам?\n\nВНИМАНИЕ: сайт будет доступен только Googlebot, остальной трафик заблокируется.`)) {
         return;
     }
+    const out = document.getElementById('onlyGoogleResult');
+    if (out) out.innerHTML = '<div class="alert alert-info py-2 mb-0"><i class="fas fa-spinner fa-spin me-1"></i>Применяем…</div>';
     showLoading('Применение правил «Только Google»...');
     $.post('security_rules_api_minimal.php', {
         action: 'apply_only_google',
@@ -446,14 +448,17 @@ function applyOnlyGoogle() {
         hideLoading();
         if (response.success) {
             showSuccess(`Применено к ${response.applied} доменам`);
-            setTimeout(() => location.reload(), 2000);
+            if (out) out.innerHTML = `<div class="alert alert-success py-2 mb-0"><i class="fas fa-check-circle me-1"></i>Применено к ${response.applied} доменам. Смотрите в Cloudflare → Security → WAF → Custom rules.</div>`;
         } else {
             showError(response.error || 'Ошибка применения');
+            if (out) out.innerHTML = `<div class="alert alert-danger py-2 mb-0"><i class="fas fa-circle-xmark me-1"></i><strong>Не применено:</strong> ${response.error || 'неизвестная ошибка'}</div>`;
         }
     })
-    .fail(function() {
+    .fail(function(xhr) {
         hideLoading();
-        showError('Ошибка соединения с сервером');
+        const msg = (xhr.responseJSON && xhr.responseJSON.error) || 'Ошибка соединения с сервером';
+        showError(msg);
+        if (out) out.innerHTML = `<div class="alert alert-danger py-2 mb-0"><i class="fas fa-circle-xmark me-1"></i>${msg}</div>`;
     });
 }
 
