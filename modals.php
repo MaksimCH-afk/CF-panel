@@ -94,26 +94,33 @@
                         }
                     }
                     ?>
-                    <div class="mb-3">
+                    <div class="mb-3 position-relative">
                         <label class="form-label">Аккаунт Cloudflare</label>
-                        <input type="text" id="accSearch" class="form-control form-control-sm mb-1" placeholder="Поиск: email / домен / токен…" onkeyup="filterAccounts(this.value)" autocomplete="off">
-                        <select name="account_id" id="accSelect" class="form-select" required size="1">
-                            <option value="">-- Выберите аккаунт --</option>
-                        </select>
+                        <input type="text" id="accSearch" class="form-control" placeholder="Поиск: email / домен / токен…" autocomplete="off" oninput="acFilter(this.value)" onfocus="acFilter(this.value)">
+                        <input type="hidden" name="account_id" id="accId">
+                        <div id="accDrop" class="list-group position-absolute w-100 shadow" style="z-index:1080; max-height:260px; overflow-y:auto; display:none;"></div>
                     </div>
                     <script>
                     const CF_ACCOUNTS = <?php echo json_encode($accountOptions, JSON_UNESCAPED_UNICODE); ?>;
-                    function renderAccounts(list) {
-                        const sel = document.getElementById('accSelect');
+                    function acFilter(q) {
+                        q = (q || '').toLowerCase().trim();
+                        const list = (!q ? CF_ACCOUNTS : CF_ACCOUNTS.filter(a => a.search.indexOf(q) !== -1)).slice(0, 50);
+                        const drop = document.getElementById('accDrop');
                         const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-                        sel.innerHTML = '<option value="">-- Выберите аккаунт --</option>' +
-                            list.slice(0, 300).map(a => `<option value="${a.id}">${esc(a.label)}</option>`).join('');
+                        if (!list.length) { drop.innerHTML = '<div class="list-group-item small text-muted">Ничего не найдено</div>'; drop.style.display = 'block'; return; }
+                        drop.innerHTML = list.map(a => `<button type="button" class="list-group-item list-group-item-action small py-1" onclick="acPick(${a.id}, this)">${esc(a.label)}</button>`).join('');
+                        drop.style.display = 'block';
                     }
-                    function filterAccounts(q) {
-                        q = q.toLowerCase().trim();
-                        renderAccounts(!q ? CF_ACCOUNTS : CF_ACCOUNTS.filter(a => a.search.indexOf(q) !== -1));
+                    function acPick(id, btn) {
+                        document.getElementById('accId').value = id;
+                        document.getElementById('accSearch').value = btn.textContent.trim();
+                        document.getElementById('accDrop').style.display = 'none';
                     }
-                    document.addEventListener('DOMContentLoaded', () => renderAccounts(CF_ACCOUNTS));
+                    document.addEventListener('click', function(e) {
+                        if (!e.target.closest('#accSearch') && !e.target.closest('#accDrop')) {
+                            const d = document.getElementById('accDrop'); if (d) d.style.display = 'none';
+                        }
+                    });
                     </script>
                     <div class="mb-3">
                         <label class="form-label">Группа</label>

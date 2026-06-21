@@ -49,9 +49,10 @@ include 'sidebar.php';
                     <button class="btn btn-primary w-100" id="createBtn" onclick="createToken()">
                         <i class="fas fa-key me-2"></i>Создать токен
                     </button>
-                    <button class="btn btn-outline-secondary btn-sm w-100 mt-2" onclick="debugGroups()">
-                        <i class="fas fa-magnifying-glass me-1"></i>Показать группы прав «redirect» (debug)
-                    </button>
+                    <div class="input-group input-group-sm mt-2">
+                        <input type="text" id="debugQuery" class="form-control" placeholder="debug: поиск групп прав (напр. account settings)">
+                        <button class="btn btn-outline-secondary" type="button" onclick="debugGroups()"><i class="fas fa-magnifying-glass"></i></button>
+                    </div>
                     <div id="debugGroupsOut" class="small mt-2"></div>
                 </div>
             </div>
@@ -184,7 +185,7 @@ function debugGroups() {
     const mp = masterParam();
     if (!mp) { showToast('Выберите или вставьте мастер-токен', 'warning'); return; }
     $('#debugGroupsOut').html('<i class="fas fa-spinner fa-spin"></i> Загрузка…');
-    $.post('master_token_api.php', Object.assign({ action: 'list_groups' }, mp), function(r) {
+    $.post('master_token_api.php', Object.assign({ action: 'list_groups', q: $('#debugQuery').val().trim() }, mp), function(r) {
         if (!r.success) { $('#debugGroupsOut').html('<span class="text-danger">' + (r.error || 'ошибка') + '</span>'); return; }
         if (!r.matched.length) { $('#debugGroupsOut').html('<span class="text-muted">Групп с redirect/transform/url не найдено (всего групп: ' + r.total + ')</span>'); return; }
         let html = '<div class="border rounded p-2 bg-light"><b>Найдены группы (всего ' + r.total + '):</b><ul class="mb-0 ps-3">';

@@ -34,12 +34,12 @@ function masterTokenPreset() {
         ['key' => 'single_redirect',  'label' => 'Single Redirect (Edit)',
          'cf' => ['Single Redirect Write', 'Dynamic URL Redirect Write', 'Dynamic Redirects Write', 'Dynamic Redirect Write'],
          'match' => ['redirect', 'write'], 'level' => 'zone'],
-        // +2 для добавления доменов через панель:
-        // «Создание зон» — та же группа Zone Write, но на ресурсе АККАУНТА (level=account)
-        // → это и разрешает POST /zones (создать новый домен в аккаунте).
-        ['key' => 'zone_create',      'label' => 'Создание зон (добавление доменов)', 'cf' => 'Zone Write',            'level' => 'account'],
-        // Account Settings (Read) — чтобы знать account_id (нужен для создания зоны) и имя аккаунта.
-        ['key' => 'account_settings', 'label' => 'Account Settings (Read)',            'cf' => 'Account Settings Read', 'level' => 'account'],
+        // Для добавления доменов: создание зон даёт уже зональное «Zone (Edit)» (Zone Write
+        // на всех зонах). Дополнительно нужно лишь Account Settings (Read) — чтобы знать
+        // account_id (обязателен для POST /zones) и имя аккаунта для подписи.
+        ['key' => 'account_settings', 'label' => 'Account Settings (Read)',
+         'cf' => ['Account Settings Read', 'Account Settings: Read'],
+         'match' => ['account', 'settings', 'read'], 'level' => 'account'],
     ];
 }
 
@@ -301,7 +301,8 @@ try {
             if ($master === '') throw new Exception('Укажите мастер-токен');
             $pg = cfMasterApi($master, 'GET', 'user/tokens/permission_groups');
             if (empty($pg['success'])) throw new Exception('Не удалось получить группы: ' . cfErr($pg));
-            $kw = ['redirect', 'transform', 'url', 'single', 'rule'];
+            $q = mb_strtolower(trim($_POST['q'] ?? ''));
+            $kw = $q !== '' ? [$q] : ['redirect', 'transform', 'single', 'account settings', 'zone create'];
             $found = [];
             foreach ($pg['result'] as $g) {
                 $n = mb_strtolower($g['name']);
