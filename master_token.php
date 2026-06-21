@@ -69,7 +69,9 @@ include 'sidebar.php';
                         <button class="btn btn-outline-secondary" onclick="copyToken()"><i class="fas fa-copy"></i></button>
                     </div>
                     <div id="missingWarn" class="small text-warning"></div>
-                    <a href="dashboard.php" class="btn btn-outline-primary btn-sm mt-2"><i class="fas fa-plus me-1"></i>Добавить аккаунт с этим токеном</a>
+                    <div id="savedAsInfo" class="small text-success mb-1"></div>
+                    <button type="button" class="btn btn-outline-primary btn-sm mt-1" onclick="saveAsAccount()"><i class="fas fa-plus me-1"></i>Добавить в панель как аккаунт</button>
+                    <div id="saveAccOut" class="small mt-1"></div>
                 </div>
             </div>
 
@@ -199,6 +201,16 @@ function copyToken() {
     el.select(); document.execCommand('copy');
     showToast('Токен скопирован', 'success');
 }
+function saveAsAccount() {
+    const tok = $('#newToken').val().trim();
+    if (!tok) { showToast('Нет токена', 'warning'); return; }
+    $.post('master_token_api.php', { action: 'save_as_account', token: tok }, function(r) {
+        if (r.success) {
+            $('#saveAccOut').html(r.already ? '<span class="text-muted">Уже в панели</span>' : ('<span class="text-success">Добавлен: <b>' + $('<div>').text(r.label || '').html() + '</b></span>'));
+            showToast('Аккаунт в панели', 'success');
+        } else showToast('Ошибка: ' + (r.error || ''), 'error');
+    }, 'json').fail(function(){ showToast('Ошибка соединения', 'error'); });
+}
 function createToken() {
     const mp = masterParam();
     if (!mp) { showToast('Выберите или вставьте мастер-токен', 'warning'); return; }
@@ -213,6 +225,8 @@ function createToken() {
         if (r.success) {
             $('#newToken').val(r.token || '');
             $('#missingWarn').html(r.missing && r.missing.length ? ('Не найдены группы: ' + r.missing.join(', ')) : '');
+            $('#savedAsInfo').html(r.saved_as ? ('✓ Уже добавлен в панель как аккаунт: <b>' + $('<div>').text(r.saved_as).html() + '</b>') : '');
+            $('#saveAccOut').html('');
             $('#resultCard').show();
             loadMasters();
             showToast('Токен создан', 'success');

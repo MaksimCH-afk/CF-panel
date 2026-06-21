@@ -733,12 +733,14 @@ function cloudflareApiRequestDetailed($pdo, $email, $apiKey, $endpoint, $method 
         }
     }
 
-    if ($userId) {
-        $status = $result['success'] ? 'Success' : 'Failed';
+    // Раньше тут логировался КАЖДЫЙ успешный вызов («API Request Success (Detailed)») —
+    // это засоряло логи и не несло смысла для пользователя. Логируем только реальные
+    // ошибки (успехи видны по результату операции в человекочитаемых записях выше).
+    if ($userId && (!$result['success'] || !empty($result['api_errors']))) {
         $errorCount = count($result['api_errors']);
-        logAction($pdo, $userId, "API Request $status (Detailed)", "Endpoint: $endpoint, Errors: $errorCount");
+        logAction($pdo, $userId, "API Request Failed (Detailed)", "Endpoint: $endpoint, Errors: $errorCount");
     }
-    
+
     return $result;
 }
 

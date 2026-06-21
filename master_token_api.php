@@ -147,11 +147,13 @@ try {
             $zoneGroups = [];
             $accountGroups = [];
             $missing = [];
+            $granted = [];
             foreach ($selected as $key) {
                 if (!isset($byKey[$key])) continue;
                 $p  = $byKey[$key];
                 $id = matchPermissionGroupId($p, $byName, $pg['result']);
                 if (!$id) { $missing[] = $p['label']; continue; }
+                $granted[] = $p['label'];
                 if ($p['level'] === 'account') $accountGroups[] = ['id' => $id];
                 else                            $zoneGroups[]    = ['id' => $id];
             }
@@ -175,7 +177,7 @@ try {
                 throw new Exception('Cloudflare отклонил создание токена: ' . cfErr($res));
             }
 
-            logAction($pdo, $userId, 'Master Token: создан токен', "Имя: {$name}, прав: " . count($selected) . ($missing ? "; не найдены: " . implode(', ', $missing) : ''));
+            logAction($pdo, $userId, 'Создан API-токен через мастер', "Токен «{$name}» создан с " . count($granted) . " правами: " . implode(', ', $granted) . ($missing ? ". НЕ найдены: " . implode(', ', $missing) : ''));
 
             // Если создавали из СОХРАНЁННОГО мастера — подтянем домены новым child-токеном
             // (у него есть Zone Read) и привяжем подсказку к мастеру. Сам мастер зоны не видит.
@@ -191,8 +193,35 @@ try {
                 }
             }
 
+            // Авто-сохранение токена как аккаунта панели — чтобы он не потерялся
+            // (CF показывает значение один раз) и сразу был доступен для добавления доменов.
+            $savedAs = null;
+            if ($newToken) {
+                try {
+                    $ex = $pdo->prepare("SELECT id FROM cloudflare_credentials WHERE user_id = ? AND api_key = ?");
+                    $ex->execute([$userId, $newToken]);
+                    if (!$ex->fetchColumn()) {
+                        $an = '';
+                        $acc2 = cfMasterApi($newToken, 'GET', 'accounts?per_page=1');
+                        if (!empty($acc2['success']) && !empty($acc2['result'][0]['name'])) $an = $acc2['result'][0]['name'];
+                        $em = $an ?: ('token-' . substr(preg_replace('/[^A-Za-z0-9]/', '', $newToken), -8));
+                        $b = $em; $k = 2;
+                        while (true) {
+                            $c = $pdo->prepare("SELECT 1 FROM cloudflare_credentials WHERE user_id = ? AND email = ?");
+                            $c->execute([$userId, $em]);
+                            if (!$c->fetchColumn()) break;
+                            $em = $b . ' #' . $k; $k++;
+                        }
+                        $pdo->prepare("INSERT INTO cloudflare_credentials (user_id, email, api_key, auth_type) VALUES (?, ?, ?, 'token')")->execute([$userId, $em, $newToken]);
+                        logAction($pdo, $userId, 'Аккаунт добавлен в панель', "авто после создания токена: {$em}");
+                        $savedAs = $em;
+                    }
+                } catch (Exception $e) { /* не критично */ }
+            }
+
             echo json_encode([
                 'success' => true,
+                'saved_as' => $savedAs,
                 'token'   => $newToken,
                 'id'      => $res['result']['id'] ?? null,
                 'name'    => $name,
@@ -229,6 +258,33 @@ try {
                 ];
             }, $rows);
             echo json_encode(['success' => true, 'masters' => $out]);
+            break;
+
+        case 'save_as_account':
+            // Сохранить токен как аккаунт панели (чтобы не потерять и управлять доменами).
+            $tok = trim($_POST['token'] ?? '');
+            $label = trim($_POST['label'] ?? '');
+            if ($tok === '') throw new Exception('Нет токена для сохранения');
+            // Уже добавлен?
+            $ex = $pdo->prepare("SELECT id FROM cloudflare_credentials WHERE user_id = ? AND api_key = ?");
+            $ex->execute([$userId, $tok]);
+            if ($ex->fetchColumn()) { echo json_encode(['success' => true, 'already' => true]); break; }
+            // Имя аккаунта из CF (если у токена есть Account Settings Read)
+            $name = '';
+            $acc = cfMasterApi($tok, 'GET', 'accounts?per_page=1');
+            if (!empty($acc['success']) && !empty($acc['result'][0]['name'])) $name = $acc['result'][0]['name'];
+            $email = $label ?: ($name ?: ('token-' . substr(preg_replace('/[^A-Za-z0-9]/', '', $tok), -8)));
+            // Уникальность email: добавим суффикс при коллизии
+            $base = $email; $i = 2;
+            while (true) {
+                $c = $pdo->prepare("SELECT 1 FROM cloudflare_credentials WHERE user_id = ? AND email = ?");
+                $c->execute([$userId, $email]);
+                if (!$c->fetchColumn()) break;
+                $email = $base . ' #' . $i; $i++;
+            }
+            $pdo->prepare("INSERT INTO cloudflare_credentials (user_id, email, api_key, auth_type) VALUES (?, ?, ?, 'token')")->execute([$userId, $email, $tok]);
+            logAction($pdo, $userId, 'Аккаунт добавлен в панель', "через мастер-токен: {$email}");
+            echo json_encode(['success' => true, 'label' => $email]);
             break;
 
         case 'delete_master':
