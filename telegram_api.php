@@ -61,8 +61,34 @@ try {
             $chat = trim($_POST['chat_id'] ?? '');
             if ($bot !== '')  tgSetSetting($pdo, 'telegram_bot_token', $bot);
             if ($chat !== '') tgSetSetting($pdo, 'telegram_chat_id', $chat);
+            $s = tgGetSettings($pdo);
+
+            // Предварительная диагностика (чтобы в логах была понятная причина)
+            $pre = '';
+            if (empty($s['bot_token']))      $pre = 'не задан bot_token';
+            elseif (empty($s['chat_id']))    $pre = 'не задан chat_id';
+            elseif (!preg_match('/^\d+:/', $s['bot_token'])) $pre = 'бот-токен неполный: нужен формат 123456789:AAE… (цифры и двоеточие в начале). Скопируйте токен от @BotFather ЦЕЛИКОМ, вместе с числом до двоеточия.';
+            if ($pre !== '') {
+                logAction($pdo, $userId, 'Telegram: тест НЕ отправлен', $pre);
+                echo json_encode(['success' => false, 'error' => $pre]);
+                break;
+            }
+
             $r = tgSendMessage($pdo, "✅ <b>CloudPanel</b>: тестовое сообщение.\nTelegram-оповещения подключены.");
-            echo json_encode(['success' => $r['ok'], 'error' => $r['error'] ?? null]);
+            if ($r['ok']) {
+                logAction($pdo, $userId, 'Telegram: тест отправлен', "chat_id: {$s['chat_id']}");
+                echo json_encode(['success' => true, 'error' => null]);
+            } else {
+                $e = (string)($r['error'] ?? 'неизвестная ошибка');
+                // Расшифровка частых ошибок Telegram
+                $hint = '';
+                if (stripos($e, 'not found') !== false)        $hint = ' → неверный/неполный бот-токен (проверьте у @BotFather)';
+                elseif (stripos($e, 'chat not found') !== false) $hint = ' → неверный chat_id, либо вы не нажали Start у бота';
+                elseif (stripos($e, 'blocked') !== false)        $hint = ' → бот заблокирован в этом чате';
+                elseif (stripos($e, 'unauthorized') !== false)   $hint = ' → бот-токен недействителен (revoked)';
+                logAction($pdo, $userId, 'Telegram: тест НЕ отправлен', "Ошибка: {$e}{$hint} | chat_id: {$s['chat_id']}");
+                echo json_encode(['success' => false, 'error' => $e . $hint]);
+            }
             break;
 
         default:

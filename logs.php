@@ -133,7 +133,6 @@ include 'sidebar.php';
     <div class="card">
         <div class="card-header">
             <span><i class="fas fa-list me-2"></i>История действий</span>
-            <span class="text-muted">Страница <?php echo $page; ?> из <?php echo max(1, $totalPages); ?></span>
         </div>
         <div class="card-body p-0">
             <?php if (empty($logs)): ?>
@@ -149,7 +148,7 @@ include 'sidebar.php';
                             <tr>
                                 <th style="width: 180px;">Время</th>
                                 <th style="width: 200px;">Действие</th>
-                                <th>Детали</th>
+                                <th class="text-end">Детали</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -165,7 +164,7 @@ include 'sidebar.php';
                                             <?php echo htmlspecialchars($log['action']); ?>
                                         </span>
                                     </td>
-                                    <td>
+                                    <td class="text-end">
                                         <span style="white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; font-size: 0.82rem;">
                                             <?php echo htmlspecialchars($log['details'] ?? '-'); ?>
                                         </span>
