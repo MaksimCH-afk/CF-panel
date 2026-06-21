@@ -82,13 +82,36 @@ try {
                 $e = (string)($r['error'] ?? 'неизвестная ошибка');
                 // Расшифровка частых ошибок Telegram
                 $hint = '';
-                if (stripos($e, 'not found') !== false)        $hint = ' → неверный/неполный бот-токен (проверьте у @BotFather)';
-                elseif (stripos($e, 'chat not found') !== false) $hint = ' → неверный chat_id, либо вы не нажали Start у бота';
+                if (stripos($e, "can't send messages to the bot") !== false) $hint = ' → в Chat ID указан id бота, а нужен ВАШ личный chat_id. Нажмите «Определить chat_id».';
+                elseif (stripos($e, 'chat not found') !== false) $hint = ' → неверный chat_id, либо вы не нажали Start у бота. Нажмите «Определить chat_id».';
+                elseif (stripos($e, 'not found') !== false)      $hint = ' → неверный/неполный бот-токен (проверьте у @BotFather)';
                 elseif (stripos($e, 'blocked') !== false)        $hint = ' → бот заблокирован в этом чате';
                 elseif (stripos($e, 'unauthorized') !== false)   $hint = ' → бот-токен недействителен (revoked)';
                 logAction($pdo, $userId, 'Telegram: тест НЕ отправлен', "Ошибка: {$e}{$hint} | chat_id: {$s['chat_id']}");
                 echo json_encode(['success' => false, 'error' => $e . $hint]);
             }
+            break;
+
+        case 'get_updates':
+            // Тянем chat_id из последних сообщений боту (getUpdates).
+            $s = tgGetSettings($pdo);
+            $bot = trim($_POST['bot_token'] ?? '');
+            if ($bot === '') $bot = $s['bot_token'];
+            if ($bot === '') throw new Exception('Сначала укажите бот-токен');
+            $ch = curl_init("https://api.telegram.org/bot" . rawurlencode($bot) . "/getUpdates?limit=20");
+            curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 15]);
+            $resp = json_decode(curl_exec($ch), true);
+            curl_close($ch);
+            if (empty($resp['ok'])) throw new Exception('Telegram: ' . ($resp['description'] ?? 'не удалось получить обновления'));
+            $chats = [];
+            foreach ($resp['result'] as $u) {
+                $chat = $u['message']['chat'] ?? $u['channel_post']['chat'] ?? $u['my_chat_member']['chat'] ?? null;
+                if (!$chat || empty($chat['id'])) continue;
+                $name = trim(($chat['title'] ?? '') . ' ' . ($chat['first_name'] ?? '') . ' ' . ($chat['username'] ? '@' . $chat['username'] : ''));
+                $chats[$chat['id']] = ['id' => (string)$chat['id'], 'type' => $chat['type'] ?? '', 'name' => $name ?: ('id ' . $chat['id'])];
+            }
+            echo json_encode(['success' => true, 'chats' => array_values($chats),
+                'note' => empty($chats) ? 'Сообщений нет. Напишите боту любое сообщение (или Start) и нажмите снова.' : '']);
             break;
 
         default:

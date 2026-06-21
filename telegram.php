@@ -20,8 +20,12 @@ include 'sidebar.php';
                         <div class="form-text" id="tokenState"></div>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Chat ID</label>
-                        <input type="text" id="chatId" class="form-control" placeholder="напр. 123456789 или -1001234567890 (канал/группа)">
+                        <label class="form-label">Chat ID <span class="text-muted small">(ваш личный id, НЕ id бота)</span></label>
+                        <div class="input-group">
+                            <input type="text" id="chatId" class="form-control" placeholder="напр. 123456789">
+                            <button class="btn btn-outline-secondary" type="button" onclick="detectChat()"><i class="fas fa-magnifying-glass me-1"></i>Определить</button>
+                        </div>
+                        <div id="chatDetect" class="small mt-1"></div>
                     </div>
                     <hr>
                     <label class="form-label fw-bold">Категории оповещений</label>
@@ -97,6 +101,20 @@ function saveTg() {
         if (r.success) { showToast('Сохранено', 'success'); $('#botToken').val(''); loadTg(); }
         else showToast('Ошибка: ' + (r.error || ''), 'error');
     }, 'json');
+}
+function detectChat() {
+    const bot = $('#botToken').val().trim(); // если пусто — сервер возьмёт сохранённый
+    $('#chatDetect').html('<i class="fas fa-spinner fa-spin"></i> Ищу сообщения боту…');
+    $.post('telegram_api.php', { action: 'get_updates', bot_token: bot }, function(r) {
+        if (!r.success) { $('#chatDetect').html('<span class="text-danger">' + (r.error || 'ошибка') + '</span>'); return; }
+        if (!r.chats.length) { $('#chatDetect').html('<span class="text-warning">' + (r.note || 'Напишите боту сообщение и нажмите снова.') + '</span>'); return; }
+        let html = 'Нажмите, чтобы подставить:<div class="mt-1 d-flex flex-wrap gap-1">';
+        r.chats.forEach(function(c){
+            html += `<button type="button" class="btn btn-sm btn-outline-primary" onclick="$('#chatId').val('${c.id}')">${$('<div>').text(c.name).html()} <span class="text-muted">[${c.type}] ${c.id}</span></button>`;
+        });
+        html += '</div>';
+        $('#chatDetect').html(html);
+    }, 'json').fail(function(){ $('#chatDetect').html('<span class="text-danger">ошибка соединения</span>'); });
 }
 function runMonitor() {
     showToast('Запускаю проход мониторинга…', 'info');
