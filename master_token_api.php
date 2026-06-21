@@ -34,6 +34,12 @@ function masterTokenPreset() {
         ['key' => 'single_redirect',  'label' => 'Single Redirect (Edit)',
          'cf' => ['Single Redirect Write', 'Dynamic URL Redirect Write', 'Dynamic Redirects Write', 'Dynamic Redirect Write'],
          'match' => ['redirect', 'write'], 'level' => 'zone'],
+        // +2 для добавления доменов через панель:
+        // «Создание зон» — та же группа Zone Write, но на ресурсе АККАУНТА (level=account)
+        // → это и разрешает POST /zones (создать новый домен в аккаунте).
+        ['key' => 'zone_create',      'label' => 'Создание зон (добавление доменов)', 'cf' => 'Zone Write',            'level' => 'account'],
+        // Account Settings (Read) — чтобы знать account_id (нужен для создания зоны) и имя аккаунта.
+        ['key' => 'account_settings', 'label' => 'Account Settings (Read)',            'cf' => 'Account Settings Read', 'level' => 'account'],
     ];
 }
 
@@ -85,6 +91,31 @@ function resolveMasterToken($pdo) {
         if ($t) return $t;
     }
     return trim($_POST['master_token'] ?? '');
+}
+
+/** Создаёт child-токен мастером по списку ключей прав. Возвращает ['ok','token','id','missing','error']. */
+function mtCreateToken($master, $name, $selected) {
+    $pg = cfMasterApi($master, 'GET', 'user/tokens/permission_groups');
+    if (empty($pg['success'])) return ['ok' => false, 'error' => 'нет доступа к группам прав: ' . cfErr($pg)];
+    $byName = [];
+    foreach ($pg['result'] as $g) $byName[mb_strtolower($g['name'])] = $g['id'];
+    $byKey = [];
+    foreach (masterTokenPreset() as $p) $byKey[$p['key']] = $p;
+    $zoneGroups = []; $accountGroups = []; $missing = [];
+    foreach ($selected as $key) {
+        if (!isset($byKey[$key])) continue;
+        $p = $byKey[$key];
+        $id = matchPermissionGroupId($p, $byName, $pg['result']);
+        if (!$id) { $missing[] = $p['label']; continue; }
+        if ($p['level'] === 'account') $accountGroups[] = ['id' => $id]; else $zoneGroups[] = ['id' => $id];
+    }
+    $policies = [];
+    if ($zoneGroups)    $policies[] = ['effect' => 'allow', 'resources' => ['com.cloudflare.api.account.zone.*' => '*'], 'permission_groups' => $zoneGroups];
+    if ($accountGroups) $policies[] = ['effect' => 'allow', 'resources' => ['com.cloudflare.api.account.*' => '*'], 'permission_groups' => $accountGroups];
+    if (!$policies) return ['ok' => false, 'error' => 'не удалось сопоставить права'];
+    $res = cfMasterApi($master, 'POST', 'user/tokens', ['name' => $name, 'policies' => $policies]);
+    if (empty($res['success'])) return ['ok' => false, 'error' => cfErr($res)];
+    return ['ok' => true, 'token' => $res['result']['value'] ?? null, 'id' => $res['result']['id'] ?? null, 'missing' => $missing];
 }
 
 try {
@@ -205,6 +236,62 @@ try {
             if ($mid === '' || !ctype_digit($mid)) throw new Exception('Не указан id');
             $pdo->prepare("DELETE FROM master_tokens WHERE id = ?")->execute([$mid]);
             echo json_encode(['success' => true]);
+            break;
+
+        case 'create_zones':
+            // Добавление доменов (создание зон) в аккаунт через сохранённый мастер-токен.
+            $mid = trim($_POST['master_id'] ?? '');
+            $raw = trim($_POST['domains'] ?? '');
+            if ($mid === '' || !ctype_digit($mid)) throw new Exception('Выберите сохранённый мастер-токен');
+            $domains = array_values(array_unique(array_filter(array_map('trim', preg_split('/[\s,]+/', mb_strtolower($raw))))));
+            if (empty($domains)) throw new Exception('Укажите хотя бы один домен');
+
+            $row = $pdo->prepare("SELECT token, working_token FROM master_tokens WHERE id = ?");
+            $row->execute([$mid]);
+            $m = $row->fetch();
+            if (!$m) throw new Exception('Мастер-токен не найден');
+
+            // Получаем/создаём рабочий токен (15 прав) — он умеет создавать зоны
+            $work = (string)($m['working_token'] ?? '');
+            if ($work === '') {
+                $allKeys = array_map(function ($p) { return $p['key']; }, masterTokenPreset());
+                $mk = mtCreateToken($m['token'], 'panel-worker-' . date('Ymd-His'), $allKeys);
+                if (empty($mk['ok'])) throw new Exception('Не удалось создать рабочий токен: ' . ($mk['error'] ?? ''));
+                $work = $mk['token'];
+                $pdo->prepare("UPDATE master_tokens SET working_token = ? WHERE id = ?")->execute([$work, $mid]);
+            }
+
+            // account_id (нужен для POST /zones) + имя аккаунта
+            $acc = cfMasterApi($work, 'GET', 'accounts?per_page=1');
+            if (empty($acc['success']) || empty($acc['result'][0]['id'])) {
+                throw new Exception('Не удалось получить account_id — у токена нет права Account Settings (Read). Пересоздайте мастер/токен с 15 правами. ' . cfErr($acc));
+            }
+            $accountId = $acc['result'][0]['id'];
+            $accountName = $acc['result'][0]['name'] ?? '';
+
+            // Кредентал в панели под рабочий токен (чтобы домены были управляемы)
+            $email = 'master#' . $mid . ($accountName ? ' ' . $accountName : '');
+            $pdo->prepare("INSERT OR IGNORE INTO cloudflare_credentials (user_id, email, api_key, auth_type) VALUES (?, ?, ?, 'token')")->execute([$userId, $email, $work]);
+            $credId = $pdo->query("SELECT id FROM cloudflare_credentials WHERE user_id = $userId AND email = " . $pdo->quote($email))->fetchColumn();
+            $grp = $pdo->query("SELECT id FROM groups WHERE user_id = $userId ORDER BY id LIMIT 1")->fetchColumn();
+
+            $results = [];
+            foreach ($domains as $dom) {
+                $z = cfMasterApi($work, 'POST', 'zones', ['name' => $dom, 'account' => ['id' => $accountId], 'type' => 'full']);
+                if (!empty($z['success'])) {
+                    $zid = $z['result']['id'] ?? '';
+                    $ns  = $z['result']['name_servers'] ?? [];
+                    try {
+                        $pdo->prepare("INSERT OR IGNORE INTO cloudflare_accounts (user_id, account_id, group_id, domain, server_ip, zone_id, ns_records, domain_status) VALUES (?, ?, ?, ?, '', ?, ?, 'unknown')")
+                            ->execute([$userId, $credId, $grp ?: null, $dom, $zid, json_encode($ns)]);
+                    } catch (Exception $e) {}
+                    $results[] = ['domain' => $dom, 'ok' => true, 'ns' => $ns];
+                } else {
+                    $results[] = ['domain' => $dom, 'ok' => false, 'error' => cfErr($z)];
+                }
+            }
+            logAction($pdo, $userId, 'Master Token: добавлены домены', 'account: ' . ($accountName ?: $accountId) . ', доменов: ' . count($domains));
+            echo json_encode(['success' => true, 'account' => $accountName ?: $accountId, 'results' => $results]);
             break;
 
         case 'list_groups':

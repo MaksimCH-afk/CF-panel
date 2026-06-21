@@ -73,17 +73,48 @@
             </div>
             <div class="modal-body">
                 <form method="POST" action="handle_forms.php">
+                    <?php
+                    // Информативные подписи аккаунтов + поиск (при 1000 аккаунтов «token-XXXX» бесполезен).
+                    $accountOptions = [];
+                    if (isset($accounts)) {
+                        $uid = $_SESSION['user_id'] ?? 1;
+                        $domsByAcc = [];
+                        $ds = $pdo->prepare("SELECT account_id, domain FROM cloudflare_accounts WHERE user_id = ? ORDER BY domain");
+                        $ds->execute([$uid]);
+                        foreach ($ds as $r) { $domsByAcc[$r['account_id']][] = $r['domain']; }
+                        foreach ($accounts as $account) {
+                            $doms = $domsByAcc[$account['id']] ?? [];
+                            $cnt = count($doms);
+                            $samples = implode(', ', array_slice($doms, 0, 3)) . ($cnt > 3 ? '…' : '');
+                            $accountOptions[] = [
+                                'id' => (int)$account['id'],
+                                'label' => $account['email'] . ' · ' . $cnt . ' дом.' . ($samples ? ' (' . $samples . ')' : ''),
+                                'search' => mb_strtolower($account['email'] . ' ' . implode(' ', $doms)),
+                            ];
+                        }
+                    }
+                    ?>
                     <div class="mb-3">
                         <label class="form-label">Аккаунт Cloudflare</label>
-                        <select name="account_id" class="form-select" required>
+                        <input type="text" id="accSearch" class="form-control form-control-sm mb-1" placeholder="Поиск: email / домен / токен…" onkeyup="filterAccounts(this.value)" autocomplete="off">
+                        <select name="account_id" id="accSelect" class="form-select" required size="1">
                             <option value="">-- Выберите аккаунт --</option>
-                            <?php if (isset($accounts)): ?>
-                                <?php foreach ($accounts as $account): ?>
-                                    <option value="<?php echo $account['id']; ?>"><?php echo htmlspecialchars($account['email']); ?></option>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
                         </select>
                     </div>
+                    <script>
+                    const CF_ACCOUNTS = <?php echo json_encode($accountOptions, JSON_UNESCAPED_UNICODE); ?>;
+                    function renderAccounts(list) {
+                        const sel = document.getElementById('accSelect');
+                        const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+                        sel.innerHTML = '<option value="">-- Выберите аккаунт --</option>' +
+                            list.slice(0, 300).map(a => `<option value="${a.id}">${esc(a.label)}</option>`).join('');
+                    }
+                    function filterAccounts(q) {
+                        q = q.toLowerCase().trim();
+                        renderAccounts(!q ? CF_ACCOUNTS : CF_ACCOUNTS.filter(a => a.search.indexOf(q) !== -1));
+                    }
+                    document.addEventListener('DOMContentLoaded', () => renderAccounts(CF_ACCOUNTS));
+                    </script>
                     <div class="mb-3">
                         <label class="form-label">Группа</label>
                         <select name="group_id" class="form-select" required>

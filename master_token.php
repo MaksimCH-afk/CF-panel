@@ -86,6 +86,17 @@ include 'sidebar.php';
         </div>
     </div>
 
+    <!-- Добавить домены в аккаунт (через выбранный сверху мастер-токен) -->
+    <div class="card mt-3">
+        <div class="card-header"><i class="fas fa-globe me-2"></i>Добавить домены в аккаунт</div>
+        <div class="card-body">
+            <p class="text-muted small mb-2">Использует выбранный сверху <b>сохранённый</b> мастер-токен. Панель создаёт зоны в его аккаунте (<code>POST /zones</code>) и показывает NS-серверы, которые надо прописать у регистратора. Нужны 15 прав (Zone Create + Account Settings Read).</p>
+            <textarea id="domainsInput" class="form-control mb-2" rows="4" placeholder="по одному домену в строке:&#10;example.com&#10;site2.net"></textarea>
+            <button class="btn btn-primary" onclick="addDomains()"><i class="fas fa-plus me-1"></i>Создать домены</button>
+            <div id="addDomainsOut" class="mt-2"></div>
+        </div>
+    </div>
+
     <!-- Управление существующими токенами -->
     <div class="card mt-3">
         <div class="card-header d-flex justify-content-between align-items-center">
@@ -212,6 +223,27 @@ function createToken() {
     }).always(function(){
         $btn.prop('disabled', false).html('<i class="fas fa-key me-2"></i>Создать токен');
     });
+}
+function addDomains() {
+    const v = $('#masterSelect').val();
+    if (!v || v === '__new__') { showToast('Выберите СОХРАНЁННЫЙ мастер-токен сверху', 'warning'); return; }
+    const domains = $('#domainsInput').val().trim();
+    if (!domains) { showToast('Впишите домены', 'warning'); return; }
+    $('#addDomainsOut').html('<div class="text-muted small"><i class="fas fa-spinner fa-spin me-1"></i>Создаём зоны…</div>');
+    $.ajax({ url: 'master_token_api.php', method: 'POST', dataType: 'json', timeout: 90000,
+        data: { action: 'create_zones', master_id: v, domains: domains } })
+    .done(function(r) {
+        if (!r.success) { $('#addDomainsOut').html('<span class="text-danger small">' + (r.error || 'ошибка') + '</span>'); return; }
+        let html = '<div class="small mb-1">Аккаунт: <b>' + $('<div>').text(r.account).html() + '</b></div><ul class="mb-0 ps-3 small">';
+        r.results.forEach(function(x) {
+            if (x.ok) html += '<li class="text-success">' + $('<div>').text(x.domain).html() + ' — создан. NS: <code>' + (x.ns || []).join('</code>, <code>') + '</code></li>';
+            else html += '<li class="text-danger">' + $('<div>').text(x.domain).html() + ' — ' + $('<div>').text(x.error).html() + '</li>';
+        });
+        html += '</ul><div class="alert alert-warning small mt-2 mb-0"><i class="fas fa-triangle-exclamation me-1"></i>Пропишите эти NS у регистратора каждого домена — иначе Cloudflare не активирует зону.</div>';
+        $('#addDomainsOut').html(html);
+        loadMasters();
+    })
+    .fail(function(x, st) { $('#addDomainsOut').html('<span class="text-danger small">' + (st === 'timeout' ? 'Таймаут (домены могли создаться — обновите)' : 'Ошибка соединения') + '</span>'); });
 }
 function loadTokens() {
     const mp = masterParam();
