@@ -137,9 +137,21 @@
                         <label class="form-label">Домен</label>
                         <input type="text" name="domain" class="form-control" placeholder="example.com" required>
                     </div>
+                    <?php
+                    $serverList = [];
+                    try { $serverList = $pdo->query("SELECT name, ip FROM servers ORDER BY name")->fetchAll(); } catch (Exception $e) {}
+                    ?>
                     <div class="mb-3">
                         <label class="form-label">IP сервера</label>
-                        <input type="text" name="server_ip" class="form-control" placeholder="192.168.1.1" required>
+                        <?php if ($serverList): ?>
+                        <select class="form-select form-select-sm mb-1" onchange="if(this.value){this.closest('form').querySelector('[name=server_ip]').value=this.value;}">
+                            <option value="">— выбрать сервер из списка —</option>
+                            <?php foreach ($serverList as $s): ?>
+                                <option value="<?php echo htmlspecialchars($s['ip']); ?>"><?php echo htmlspecialchars($s['name'] . ' — ' . $s['ip']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <?php endif; ?>
+                        <input type="text" name="server_ip" class="form-control" placeholder="192.168.1.1 (или выберите сервер выше)" required>
                     </div>
                     <div class="mb-3">
                         <div class="form-check">

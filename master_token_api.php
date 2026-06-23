@@ -93,6 +93,23 @@ function resolveMasterToken($pdo) {
     return trim($_POST['master_token'] ?? '');
 }
 
+/** Импортирует все зоны (домены) аккаунта в панель под кредентал $credId. */
+function mtImportZones($pdo, $userId, $credId, $email, $token, $groupId = null) {
+    $proxies = function_exists('getProxies') ? getProxies($pdo, $userId) : [];
+    $zr = cfFetchAllZones($pdo, $email, $token, $proxies, $userId, 'token');
+    if (empty($zr['success'])) return ['ok' => false, 'error' => $zr['error'] ?? 'не удалось получить зоны', 'count' => 0];
+    $ins = $pdo->prepare("INSERT OR IGNORE INTO cloudflare_accounts (user_id, account_id, group_id, domain, server_ip, ssl_mode, zone_id) VALUES (?, ?, ?, ?, '0.0.0.0', NULL, ?)");
+    $n = 0;
+    foreach ($zr['zones'] as $zone) {
+        $zn = is_object($zone) ? ($zone->name ?? null) : ($zone['name'] ?? null);
+        $zid = is_object($zone) ? ($zone->id ?? '') : ($zone['id'] ?? '');
+        if (!$zn) continue;
+        $ins->execute([$userId, $credId, $groupId, $zn, $zid]);
+        $n++;
+    }
+    return ['ok' => true, 'count' => $n];
+}
+
 /** Создаёт child-токен мастером по списку ключей прав. Возвращает ['ok','token','id','missing','error']. */
 function mtCreateToken($master, $name, $selected) {
     $pg = cfMasterApi($master, 'GET', 'user/tokens/permission_groups');
@@ -213,8 +230,12 @@ try {
                             $em = $b . ' #' . $k; $k++;
                         }
                         $pdo->prepare("INSERT INTO cloudflare_credentials (user_id, email, api_key, auth_type) VALUES (?, ?, ?, 'token')")->execute([$userId, $em, $newToken]);
-                        logAction($pdo, $userId, 'Аккаунт добавлен в панель', "авто после создания токена: {$em}");
-                        $savedAs = $em;
+                        $credId = (int)$pdo->lastInsertId();
+                        $grp = $pdo->query("SELECT id FROM groups WHERE user_id = $userId ORDER BY id LIMIT 1")->fetchColumn();
+                        $imp = mtImportZones($pdo, $userId, $credId, $em, $newToken, $grp ?: null);
+                        $importedCount = $imp['count'] ?? 0;
+                        logAction($pdo, $userId, 'Аккаунт добавлен в панель', "авто после создания токена: {$em}, импортировано доменов: {$importedCount}");
+                        $savedAs = $em . ' (импортировано доменов: ' . $importedCount . ')';
                     }
                 } catch (Exception $e) { /* не критично */ }
             }
@@ -260,6 +281,22 @@ try {
             echo json_encode(['success' => true, 'masters' => $out]);
             break;
 
+        case 'import_empty':
+            // Импорт зон во все токен-аккаунты панели, у которых сейчас 0 доменов
+            // (например, заведённые ранее без импорта). Использует токен самого аккаунта.
+            $creds = $pdo->query("SELECT cc.id, cc.email, cc.api_key FROM cloudflare_credentials cc
+                WHERE cc.user_id = $userId AND COALESCE(cc.auth_type,'') = 'token'
+                  AND (SELECT COUNT(*) FROM cloudflare_accounts ca WHERE ca.account_id = cc.id) = 0")->fetchAll();
+            $grp = $pdo->query("SELECT id FROM groups WHERE user_id = $userId ORDER BY id LIMIT 1")->fetchColumn();
+            $report = [];
+            foreach ($creds as $c) {
+                $imp = mtImportZones($pdo, $userId, $c['id'], $c['email'], $c['api_key'], $grp ?: null);
+                $report[] = ['account' => $c['email'], 'ok' => !empty($imp['ok']), 'count' => $imp['count'] ?? 0, 'error' => $imp['error'] ?? null];
+            }
+            logAction($pdo, $userId, 'Импорт доменов в пустые аккаунты', 'аккаунтов обработано: ' . count($creds));
+            echo json_encode(['success' => true, 'report' => $report]);
+            break;
+
         case 'save_as_account':
             // Сохранить токен как аккаунт панели (чтобы не потерять и управлять доменами).
             $tok = trim($_POST['token'] ?? '');
@@ -283,8 +320,11 @@ try {
                 $email = $base . ' #' . $i; $i++;
             }
             $pdo->prepare("INSERT INTO cloudflare_credentials (user_id, email, api_key, auth_type) VALUES (?, ?, ?, 'token')")->execute([$userId, $email, $tok]);
-            logAction($pdo, $userId, 'Аккаунт добавлен в панель', "через мастер-токен: {$email}");
-            echo json_encode(['success' => true, 'label' => $email]);
+            $credId = (int)$pdo->lastInsertId();
+            $grp = $pdo->query("SELECT id FROM groups WHERE user_id = $userId ORDER BY id LIMIT 1")->fetchColumn();
+            $imp = mtImportZones($pdo, $userId, $credId, $email, $tok, $grp ?: null);
+            logAction($pdo, $userId, 'Аккаунт добавлен в панель', "через мастер-токен: {$email}, импортировано доменов: " . ($imp['count'] ?? 0));
+            echo json_encode(['success' => true, 'label' => $email, 'imported' => $imp['count'] ?? 0]);
             break;
 
         case 'delete_master':

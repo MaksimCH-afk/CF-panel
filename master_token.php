@@ -96,6 +96,7 @@ include 'sidebar.php';
             <p class="text-muted small mb-2">Использует выбранный сверху <b>сохранённый</b> мастер-токен. Панель создаёт зоны в его аккаунте (<code>POST /zones</code>) и показывает NS-серверы, которые надо прописать у регистратора. Нужны 15 прав (Zone Create + Account Settings Read).</p>
             <textarea id="domainsInput" class="form-control mb-2" rows="4" placeholder="по одному домену в строке:&#10;example.com&#10;site2.net"></textarea>
             <button class="btn btn-primary" onclick="addDomains()"><i class="fas fa-plus me-1"></i>Создать домены</button>
+            <button class="btn btn-outline-secondary ms-1" onclick="importEmpty()"><i class="fas fa-download me-1"></i>Импортировать домены в пустые аккаунты</button>
             <div id="addDomainsOut" class="mt-2"></div>
         </div>
     </div>
@@ -238,6 +239,23 @@ function createToken() {
     }).always(function(){
         $btn.prop('disabled', false).html('<i class="fas fa-key me-2"></i>Создать токен');
     });
+}
+function importEmpty() {
+    $('#addDomainsOut').html('<div class="text-muted small"><i class="fas fa-spinner fa-spin me-1"></i>Импортирую домены…</div>');
+    $.ajax({ url: 'master_token_api.php', method: 'POST', dataType: 'json', timeout: 120000, data: { action: 'import_empty' } })
+    .done(function(r) {
+        if (!r.success) { $('#addDomainsOut').html('<span class="text-danger small">' + (r.error || 'ошибка') + '</span>'); return; }
+        if (!r.report.length) { $('#addDomainsOut').html('<span class="text-muted small">Пустых токен-аккаунтов нет.</span>'); return; }
+        let html = '<ul class="mb-0 ps-3 small">';
+        r.report.forEach(function(x) {
+            if (x.ok) html += '<li class="text-success">' + $('<div>').text(x.account).html() + ' — импортировано: ' + x.count + '</li>';
+            else html += '<li class="text-danger">' + $('<div>').text(x.account).html() + ' — ' + $('<div>').text(x.error || 'ошибка').html() + '</li>';
+        });
+        html += '</ul>';
+        $('#addDomainsOut').html(html);
+        showToast('Импорт завершён', 'success');
+    })
+    .fail(function(x, st) { $('#addDomainsOut').html('<span class="text-danger small">' + (st === 'timeout' ? 'Таймаут' : 'Ошибка соединения') + '</span>'); });
 }
 function addDomains() {
     const v = $('#masterSelect').val();
