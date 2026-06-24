@@ -282,11 +282,11 @@ try {
             break;
 
         case 'import_empty':
-            // Импорт зон во все токен-аккаунты панели, у которых сейчас 0 доменов
-            // (например, заведённые ранее без импорта). Использует токен самого аккаунта.
+            // Импорт/обновление зон по ВСЕМ токен-аккаунтам панели: подтягивает недостающие
+            // домены из Cloudflare (INSERT OR IGNORE — существующие не трогаются). Так в панель
+            // попадают зоны, созданные в CF после добавления аккаунта (напр. новые домены).
             $creds = $pdo->query("SELECT cc.id, cc.email, cc.api_key FROM cloudflare_credentials cc
-                WHERE cc.user_id = $userId AND COALESCE(cc.auth_type,'') = 'token'
-                  AND (SELECT COUNT(*) FROM cloudflare_accounts ca WHERE ca.account_id = cc.id) = 0")->fetchAll();
+                WHERE cc.user_id = $userId AND COALESCE(cc.auth_type,'') = 'token'")->fetchAll();
             $grp = $pdo->query("SELECT id FROM groups WHERE user_id = $userId ORDER BY id LIMIT 1")->fetchColumn();
             $report = [];
             foreach ($creds as $c) {

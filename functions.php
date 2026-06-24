@@ -825,6 +825,12 @@ function getDNSIPFromCloudflare($pdo, $domainId, $userId) {
         }
         
         $dnsIp = $dnsResponse->result[0]->content;
+        // Флаг проксирования апекс-записи (оранжевое облако CF). Берём запись для корня домена,
+        // иначе первую A-запись.
+        $proxiedFlag = !empty($dnsResponse->result[0]->proxied) ? 1 : 0;
+        foreach ($dnsResponse->result as $rec) {
+            if (($rec->name ?? '') === $domain['domain']) { $proxiedFlag = !empty($rec->proxied) ? 1 : 0; break; }
+        }
         $allIPs = array_map(function($record) { return $record->content; }, $dnsResponse->result);
         
         logAction($pdo, $userId, "getDNSIP Records Found", "Domain: {$domain['domain']}, Primary IP: $dnsIp, All IPs: " . implode(', ', $allIPs));
@@ -843,8 +849,8 @@ function getDNSIPFromCloudflare($pdo, $domainId, $userId) {
         
         // Обновляем DNS IP и NS серверы в базе
         $nsRecordsJson = json_encode($nsServers);
-        $updateStmt = $pdo->prepare("UPDATE cloudflare_accounts SET dns_ip = ?, zone_id = ?, ns_records = ? WHERE id = ?");
-        $updateResult = $updateStmt->execute([$dnsIp, $zoneId, $nsRecordsJson, $domainId]);
+        $updateStmt = $pdo->prepare("UPDATE cloudflare_accounts SET dns_ip = ?, zone_id = ?, ns_records = ?, proxied = ? WHERE id = ?");
+        $updateResult = $updateStmt->execute([$dnsIp, $zoneId, $nsRecordsJson, $proxiedFlag, $domainId]);
         $rowsAffected = $updateStmt->rowCount();
         
         logAction($pdo, $userId, "getDNSIP Database Update", "Domain: {$domain['domain']}, Update Success: " . ($updateResult ? 'Yes' : 'No') . ", Rows Affected: $rowsAffected, New DNS IP: $dnsIp, Zone ID: $zoneId");

@@ -395,6 +395,13 @@ function getDomainStatusInfo($status, $httpCode = null) {
                                 </td>
                                 <td>
                                     <code><?php echo htmlspecialchars($domain['dns_ip'] ?? '—'); ?></code>
+                                    <?php if (($domain['proxied'] ?? null) !== null): ?>
+                                        <?php if ($domain['proxied']): ?>
+                                            <i class="fas fa-cloud text-warning ms-1" title="Проксируется Cloudflare (оранжевое облако)"></i>
+                                        <?php else: ?>
+                                            <i class="fas fa-cloud text-muted ms-1" title="DNS only — трафик НЕ проксируется (серое облако)"></i>
+                                        <?php endif; ?>
+                                    <?php endif; ?>
                                 </td>
                                 <td>
                                     <select class="form-select form-select-sm group-select"

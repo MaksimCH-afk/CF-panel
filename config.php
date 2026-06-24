@@ -26,8 +26,8 @@ define('BASE_PATH', $basePath);
 define('ROOT_PATH', dirname(__FILE__) . '/');
 define('DB_PATH', ROOT_PATH . 'cloudflare_panel.db');
 
-// Версия панели (счётчик). Текущая — 28.0, следующие правки: 29.0, 30.0, ...
-define('PANEL_VERSION', '28.0');
+// Версия панели (счётчик). Текущая — 29.0, следующие правки: 30.0, 31.0, ...
+define('PANEL_VERSION', '29.0');
 
 // Перенаправление на HTTPS, если соединение не защищено (исключая localhost, CLI и API файлы)
 if (php_sapi_name() !== 'cli') {
@@ -329,7 +329,7 @@ try {
     }
     // WHOIS/RDAP доп. поля (DNSSEC, abuse-контакт, источник данных) — глобально,
     // чтобы whois_api.php работал и без предварительного захода на страницу WHOIS.
-    foreach (['whois_dnssec TEXT', 'whois_abuse TEXT', 'whois_source TEXT', 'last_monitor DATETIME'] as $col) {
+    foreach (['whois_dnssec TEXT', 'whois_abuse TEXT', 'whois_source TEXT', 'last_monitor DATETIME', 'proxied INTEGER'] as $col) {
         try { $pdo->exec("ALTER TABLE cloudflare_accounts ADD COLUMN $col DEFAULT NULL"); } catch (Exception $e) {}
     }
     // Глобальные настройки панели (key-value): Telegram bot_token/chat_id и т.п.

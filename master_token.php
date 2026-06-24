@@ -96,7 +96,7 @@ include 'sidebar.php';
             <p class="text-muted small mb-2">Использует выбранный сверху <b>сохранённый</b> мастер-токен. Панель создаёт зоны в его аккаунте (<code>POST /zones</code>) и показывает NS-серверы, которые надо прописать у регистратора. Нужны 15 прав (Zone Create + Account Settings Read).</p>
             <textarea id="domainsInput" class="form-control mb-2" rows="4" placeholder="по одному домену в строке:&#10;example.com&#10;site2.net"></textarea>
             <button class="btn btn-primary" onclick="addDomains()"><i class="fas fa-plus me-1"></i>Создать домены</button>
-            <button class="btn btn-outline-secondary ms-1" onclick="importEmpty()"><i class="fas fa-download me-1"></i>Импортировать домены в пустые аккаунты</button>
+            <button class="btn btn-outline-secondary ms-1" onclick="importEmpty()"><i class="fas fa-download me-1"></i>Импортировать/обновить домены (все аккаунты)</button>
             <div id="addDomainsOut" class="mt-2"></div>
         </div>
     </div>

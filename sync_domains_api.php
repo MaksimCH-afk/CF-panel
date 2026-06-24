@@ -100,6 +100,7 @@ function syncDomain($pdo, $userId) {
         'domain_id' => $domainId,
         'domain' => $domain['domain'],
         'dns_ip' => null,
+        'proxied' => null,
         'ssl_mode' => null,
         'ssl_status' => null,
         'http_code' => null,
@@ -124,15 +125,21 @@ function syncDomain($pdo, $userId) {
         if ($dnsResponse['success'] && !empty($dnsResponse['data'])) {
             // Собираем все уникальные IP
             $ips = [];
+            $proxiedFlag = null;
             $records = is_array($dnsResponse['data']) ? $dnsResponse['data'] : [$dnsResponse['data']];
             foreach ($records as $record) {
                 if (isset($record->content) && $record->content) {
                     $ips[] = $record->content;
+                    // proxied: предпочитаем апекс-запись (имя = домен), иначе первую A
+                    if ($proxiedFlag === null || ($record->name ?? '') === $domain['domain']) {
+                        $proxiedFlag = !empty($record->proxied) ? 1 : 0;
+                    }
                 }
             }
             if (!empty($ips)) {
                 $uniqueIps = array_unique($ips);
                 $result['dns_ip'] = implode(', ', $uniqueIps);
+                $result['proxied'] = $proxiedFlag;
                 $result['a_records_count'] = count($records);
 
                 if ($domain['dns_ip'] !== $result['dns_ip']) {
@@ -265,6 +272,7 @@ function syncDomain($pdo, $userId) {
         $updateSql = "
             UPDATE cloudflare_accounts SET
                 dns_ip = COALESCE(?, dns_ip),
+                proxied = COALESCE(?, proxied),
                 ssl_mode = COALESCE(?, ssl_mode),
                 ssl_has_active = COALESCE(?, ssl_has_active),
                 http_code = ?,
@@ -273,10 +281,11 @@ function syncDomain($pdo, $userId) {
                 ssl_last_check = datetime('now')
             WHERE id = ?
         ";
-        
+
         $stmt = $pdo->prepare($updateSql);
         $stmt->execute([
             $result['dns_ip'],
+            $result['proxied'],
             $result['ssl_mode'],
             $result['ssl_has_active'] ?? null,
             $result['http_code'],
