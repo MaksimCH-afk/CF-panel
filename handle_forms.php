@@ -231,17 +231,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
                 
+                // Базовые DNS-записи на выбранный сервер (A @, A *, CNAME www) — по галочке
+                $dnsNote = '';
+                if ($zoneId && $serverIp && (!isset($_POST['create_dns']) || $_POST['create_dns'])) {
+                    $dnsRes = cfCreateOriginDnsRecords($pdo, $account['email'], $account['api_key'], $zoneId, $domain, $serverIp, $proxies, $_SESSION['user_id']);
+                    logAction($pdo, $_SESSION['user_id'], "Domain DNS-записи", "Domain: $domain, создано: {$dnsRes['created']}/3" . ($dnsRes['errors'] ? "; ошибки: " . implode('; ', $dnsRes['errors']) : ''));
+                    $dnsNote = ", DNS-записей создано: {$dnsRes['created']}/3";
+                }
+
                 // ИСПРАВЛЕНО: Добавляем домен в базу с реальными данными из Cloudflare
                 $stmt = $pdo->prepare("
-                    INSERT OR IGNORE INTO cloudflare_accounts 
-                    (user_id, account_id, group_id, domain, server_ip, always_use_https, min_tls_version, ssl_mode, zone_id, dns_ip) 
+                    INSERT OR IGNORE INTO cloudflare_accounts
+                    (user_id, account_id, group_id, domain, server_ip, always_use_https, min_tls_version, ssl_mode, zone_id, dns_ip)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 $stmt->execute([$_SESSION['user_id'], $accountId, $groupId, $domain, $serverIp, $alwaysHttps, $minTlsVersion, $sslMode, $zoneId, $serverIp]);
                 
                 if ($stmt->rowCount() > 0) {
                     logAction($pdo, $_SESSION['user_id'], "Domain Added Successfully", "Domain: $domain, Zone ID: $zoneId, SSL: $sslMode, HTTPS: $alwaysHttps, TLS: $minTlsVersion");
-                    header('Location: ' . BASE_PATH . 'dashboard.php?notification=Домен добавлен в Cloudflare и базу данных');
+                    header('Location: ' . BASE_PATH . 'dashboard.php?notification=' . urlencode('Домен добавлен в Cloudflare и базу данных' . $dnsNote));
                 } else {
                     header('Location: ' . BASE_PATH . 'dashboard.php?error=Домен уже существует в базе данных');
                 }

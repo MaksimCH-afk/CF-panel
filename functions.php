@@ -95,6 +95,33 @@ function tgClassifyStatus($code) {
     return 'offline';
 }
 
+/**
+ * Заводит базовые DNS-записи домена на выбранный сервер:
+ *   A @   -> ip  (proxied)
+ *   A *   -> ip  (DNS-only: прокси-wildcard доступен только на Enterprise)
+ *   CNAME www -> корень домена (proxied)
+ * Дубликаты Cloudflare отклоняет — это не критично. Возвращает ['created','errors'].
+ */
+function cfCreateOriginDnsRecords($pdo, $email, $apiKey, $zoneId, $domain, $ip, $proxies = [], $userId = null) {
+    $records = [
+        ['type' => 'A',     'name' => $domain,          'content' => $ip,     'proxied' => true],
+        ['type' => 'A',     'name' => '*.' . $domain,   'content' => $ip,     'proxied' => false],
+        ['type' => 'CNAME', 'name' => 'www.' . $domain, 'content' => $domain, 'proxied' => true],
+    ];
+    $created = 0; $errors = [];
+    foreach ($records as $r) {
+        $payload = ['type' => $r['type'], 'name' => $r['name'], 'content' => $r['content'], 'ttl' => 1, 'proxied' => $r['proxied']];
+        $resp = cloudflareApiRequestDetailed($pdo, $email, $apiKey, "zones/$zoneId/dns_records", 'POST', $payload, $proxies, $userId);
+        if (!empty($resp['success'])) {
+            $created++;
+        } else {
+            $msg = $resp['api_errors'][0]['message'] ?? ($resp['curl_error'] ?? 'ошибка');
+            $errors[] = $r['type'] . ' ' . $r['name'] . ': ' . $msg;
+        }
+    }
+    return ['created' => $created, 'errors' => $errors];
+}
+
 function getRandomProxy($proxies) {
     return $proxies ? $proxies[array_rand($proxies)] : null;
 }

@@ -26,8 +26,8 @@ define('BASE_PATH', $basePath);
 define('ROOT_PATH', dirname(__FILE__) . '/');
 define('DB_PATH', ROOT_PATH . 'cloudflare_panel.db');
 
-// Версия панели (счётчик). Текущая — 26.0, следующие правки: 27.0, 28.0, ...
-define('PANEL_VERSION', '26.0');
+// Версия панели (счётчик). Текущая — 27.0, следующие правки: 28.0, 29.0, ...
+define('PANEL_VERSION', '27.0');
 
 // Перенаправление на HTTPS, если соединение не защищено (исключая localhost, CLI и API файлы)
 if (php_sapi_name() !== 'cli') {
@@ -356,6 +356,8 @@ try {
         $st = $pdo->prepare("INSERT OR IGNORE INTO servers (name, ip) VALUES (?, ?)");
         foreach ($seed as $s) { $st->execute($s); }
     }
+    // Дополнительные серверы (идемпотентно, по UNIQUE(ip) — не дублируются и не трогают остальные).
+    $pdo->prepare("INSERT OR IGNORE INTO servers (name, ip) VALUES (?, ?)")->execute(['Антона', '46.21.250.184']);
 
     try {
         $pdo->exec("UPDATE cloudflare_accounts SET updated_at = COALESCE(updated_at, created_at)");

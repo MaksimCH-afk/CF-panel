@@ -155,6 +155,10 @@
                     </div>
                     <div class="mb-3">
                         <div class="form-check">
+                            <input type="checkbox" name="create_dns" class="form-check-input" id="createDnsSingle" value="1" checked>
+                            <label class="form-check-label" for="createDnsSingle">Создать DNS-записи на выбранный IP <small class="text-muted">(A @, A *, CNAME www)</small></label>
+                        </div>
+                        <div class="form-check">
                             <input type="checkbox" name="enable_https" class="form-check-input" id="enableHttpsSingle">
                             <label class="form-check-label" for="enableHttpsSingle">Always Use HTTPS</label>
                         </div>
