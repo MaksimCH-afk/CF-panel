@@ -411,7 +411,10 @@ function getDomainStatusInfo($status, $httpCode = null) {
                                     </select>
                                 </td>
                                 <td class="text-end">
-                                    <div class="dropdown">
+                                    <button class="btn btn-light btn-sm btn-icon me-1" type="button" title="Очистить кэш" onclick="purgeDomainCache(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')">
+                                        <i class="fas fa-broom text-warning"></i>
+                                    </button>
+                                    <div class="dropdown d-inline-block">
                                         <button class="btn btn-light btn-sm btn-icon" type="button" data-bs-toggle="dropdown">
                                             <i class="fas fa-ellipsis-v"></i>
                                         </button>
@@ -420,7 +423,6 @@ function getDomainStatusInfo($status, $httpCode = null) {
                                             <li><a class="dropdown-item" href="#" onclick="syncDomainNow(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')"><i class="fas fa-rotate me-2 text-primary"></i>Синхронизировать (IP/SSL/статус)</a></li>
                                             <li><a class="dropdown-item" href="#" onclick="openDnsManager(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')"><i class="fas fa-list me-2 text-primary"></i>DNS записи (A/CNAME/TXT/MX)</a></li>
                                             <li><a class="dropdown-item" href="#" onclick="checkSSL(<?php echo $domain['id']; ?>)"><i class="fas fa-shield-alt me-2 text-success"></i>Проверить SSL</a></li>
-                                            <li><a class="dropdown-item" href="#" onclick="purgeDomainCache(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')"><i class="fas fa-broom me-2 text-warning"></i>Очистить кэш</a></li>
                                             <li><a class="dropdown-item" href="#" onclick="openAnalytics(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')"><i class="fas fa-chart-line me-2 text-info"></i>Аналитика</a></li>
                                             <li><hr class="dropdown-divider"></li>
                                             <li><h6 class="dropdown-header">Безопасность</h6></li>
@@ -538,12 +540,19 @@ function getDomainStatusInfo($status, $httpCode = null) {
                 <!-- Выбор группы -->
                 <div id="syncStep1">
                     <div class="mb-3">
-                        <label class="form-label">Выберите группу для синхронизации:</label>
+                        <label class="form-label">Что синхронизировать (группа или аккаунт):</label>
                         <select id="syncGroupSelect" class="form-select">
                             <option value="all">🌐 Все домены</option>
+                            <optgroup label="Группы">
                             <?php foreach ($groups as $group): ?>
-                                <option value="<?php echo $group['id']; ?>"><?php echo htmlspecialchars($group['name']); ?></option>
+                                <option value="group:<?php echo $group['id']; ?>"><?php echo htmlspecialchars($group['name']); ?></option>
                             <?php endforeach; ?>
+                            </optgroup>
+                            <optgroup label="Аккаунты">
+                            <?php foreach ($accounts as $acc): ?>
+                                <option value="account:<?php echo $acc['id']; ?>"><?php echo htmlspecialchars($acc['email']); ?></option>
+                            <?php endforeach; ?>
+                            </optgroup>
                         </select>
                     </div>
                     <div class="alert alert-info">
@@ -926,12 +935,14 @@ function startProgressiveSync() {
 }
 
 async function beginSync() {
-    const groupId = document.getElementById('syncGroupSelect').value;
-    
-    // Получаем список доменов
+    const scope = document.getElementById('syncGroupSelect').value;
+
+    // Получаем список доменов (фильтр по группе ИЛИ по аккаунту)
     const formData = new FormData();
     formData.append('action', 'get_domains');
-    formData.append('group_id', groupId);
+    if (scope.indexOf('group:') === 0) formData.append('group_id', scope.slice(6));
+    else if (scope.indexOf('account:') === 0) formData.append('account_id', scope.slice(8));
+    else formData.append('group_id', 'all');
     
     const res = await fetch('sync_domains_api.php', {
         method: 'POST',

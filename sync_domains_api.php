@@ -49,7 +49,13 @@ function getDomains($pdo, $userId) {
         $sql .= " AND ca.group_id = ?";
         $params[] = $groupId;
     }
-    
+    // Фильтр по конкретному аккаунту (credential id)
+    $accountId = $_POST['account_id'] ?? null;
+    if ($accountId) {
+        $sql .= " AND ca.account_id = ?";
+        $params[] = (int)$accountId;
+    }
+
     $sql .= " ORDER BY ca.domain ASC";
     
     $stmt = $pdo->prepare($sql);
