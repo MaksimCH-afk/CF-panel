@@ -944,6 +944,21 @@ function startProgressiveSync() {
 async function beginSync() {
     const scope = document.getElementById('syncGroupSelect').value;
 
+    // Если выбран конкретный аккаунт — сначала обнаружим и добавим НЕДОСТАЮЩИЕ зоны
+    // этого аккаунта (чтобы синк увидел новые домены, созданные в Cloudflare).
+    if (scope.indexOf('account:') === 0) {
+        try {
+            const impFd = new FormData();
+            impFd.append('action', 'import_account');
+            impFd.append('account_id', scope.slice(8));
+            const impRes = await fetch('sync_domains_api.php', { method: 'POST', body: impFd });
+            const impData = await impRes.json();
+            if (impData.success && impData.imported > 0) {
+                showToast('Найдено и добавлено новых доменов: ' + impData.imported, 'success');
+            }
+        } catch (e) { /* не блокируем синк */ }
+    }
+
     // Получаем список доменов (фильтр по группе ИЛИ по аккаунту)
     const formData = new FormData();
     formData.append('action', 'get_domains');

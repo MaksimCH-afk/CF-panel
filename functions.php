@@ -122,6 +122,27 @@ function cfCreateOriginDnsRecords($pdo, $email, $apiKey, $zoneId, $domain, $ip, 
     return ['created' => $created, 'errors' => $errors];
 }
 
+/**
+ * Импортирует в панель недостающие зоны конкретного аккаунта (credential).
+ * INSERT OR IGNORE — существующие домены не трогаются, добавляются только новые.
+ * Возвращает ['ok'=>bool,'count'=>int,'error'=>?].
+ */
+function cfImportZonesForCredential($pdo, $userId, $credId, $email, $apiKey, $groupId = null) {
+    $proxies = getProxies($pdo, $userId);
+    $zr = cfFetchAllZones($pdo, $email, $apiKey, $proxies, $userId, 'token');
+    if (empty($zr['success'])) return ['ok' => false, 'count' => 0, 'error' => $zr['error'] ?? 'не удалось получить зоны'];
+    $ins = $pdo->prepare("INSERT OR IGNORE INTO cloudflare_accounts (user_id, account_id, group_id, domain, server_ip, ssl_mode, zone_id) VALUES (?, ?, ?, ?, '0.0.0.0', NULL, ?)");
+    $n = 0;
+    foreach ($zr['zones'] as $zone) {
+        $zn = is_object($zone) ? ($zone->name ?? null) : ($zone['name'] ?? null);
+        $zid = is_object($zone) ? ($zone->id ?? '') : ($zone['id'] ?? '');
+        if (!$zn) continue;
+        $ins->execute([$userId, $credId, $groupId, $zn, $zid]);
+        if ($ins->rowCount() > 0) $n++;
+    }
+    return ['ok' => true, 'count' => $n];
+}
+
 function getRandomProxy($proxies) {
     return $proxies ? $proxies[array_rand($proxies)] : null;
 }

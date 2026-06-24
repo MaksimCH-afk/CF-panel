@@ -21,6 +21,19 @@ switch ($action) {
     case 'get_domains':
         getDomains($pdo, $userId);
         break;
+    case 'import_account':
+        // Обнаружить и добавить недостающие зоны ОДНОГО аккаунта (перед синхронизацией).
+        $accountId = (int)($_POST['account_id'] ?? 0);
+        if (!$accountId) { echo json_encode(['success' => false, 'error' => 'Не указан аккаунт']); break; }
+        $cr = $pdo->prepare("SELECT id, email, api_key, COALESCE(auth_type,'') auth FROM cloudflare_credentials WHERE id = ? AND user_id = ?");
+        $cr->execute([$accountId, $userId]);
+        $c = $cr->fetch();
+        if (!$c) { echo json_encode(['success' => false, 'error' => 'Аккаунт не найден']); break; }
+        $grp = $pdo->query("SELECT id FROM groups WHERE user_id = $userId ORDER BY id LIMIT 1")->fetchColumn();
+        $imp = cfImportZonesForCredential($pdo, $userId, $c['id'], $c['email'], $c['api_key'], $grp ?: null);
+        if (!empty($imp['count'])) logAction($pdo, $userId, 'Синк: добавлены новые домены аккаунта', $c['email'] . ', добавлено: ' . $imp['count']);
+        echo json_encode(['success' => !empty($imp['ok']), 'imported' => $imp['count'] ?? 0, 'error' => $imp['error'] ?? null]);
+        break;
     case 'sync_domain':
         syncDomain($pdo, $userId);
         break;
