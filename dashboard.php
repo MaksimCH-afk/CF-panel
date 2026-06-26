@@ -30,6 +30,14 @@ $stmt = $pdo->prepare("SELECT * FROM cloudflare_credentials WHERE user_id = ?");
 $stmt->execute([$userId]);
 $accounts = $stmt->fetchAll();
 
+// Карта IP -> имя сервера (для подписи под DNS IP на дашборде)
+$serverByIp = [];
+try {
+    foreach ($pdo->query("SELECT name, ip FROM servers") as $srv) {
+        $serverByIp[$srv['ip']] = $srv['name'];
+    }
+} catch (Exception $e) { /* таблицы может ещё не быть */ }
+
 // Пагинация
 $perPage = 50;
 $page = max(1, (int)($_GET['page'] ?? 1));
@@ -401,6 +409,12 @@ function getDomainStatusInfo($status, $httpCode = null) {
                                         <?php else: ?>
                                             <i class="fas fa-cloud text-muted ms-1" title="DNS only — трафик НЕ проксируется (серое облако)"></i>
                                         <?php endif; ?>
+                                    <?php endif; ?>
+                                    <?php
+                                    $primaryIp = trim(explode(',', $domain['dns_ip'] ?? '')[0]);
+                                    $srvName = $serverByIp[$primaryIp] ?? null;
+                                    if ($srvName): ?>
+                                        <div class="small text-muted"><i class="fas fa-server me-1"></i><?php echo htmlspecialchars($srvName); ?></div>
                                     <?php endif; ?>
                                 </td>
                                 <td>
