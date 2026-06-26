@@ -459,6 +459,11 @@ function cfGetCustomRuleset($pdo, $email, $apiKey, $zoneId, $proxies = [], $user
 function cfDetectOnlyGoogle($pdo, $email, $apiKey, $zoneId, $proxies = [], $userId = null) {
     if (empty($zoneId)) return null;
     $cur = cfGetCustomRuleset($pdo, $email, $apiKey, $zoneId, $proxies, $userId);
+    if (!empty($cur['error'])) {
+        // Один ретрай на транзиентный сбой (429/5xx) — иначе бейдж бы промахивался на загруженном синке.
+        usleep(400000);
+        $cur = cfGetCustomRuleset($pdo, $email, $apiKey, $zoneId, $proxies, $userId);
+    }
     if (!empty($cur['error'])) return null; // не смогли получить — состояние неизвестно
     $hasAllow = false; $hasBlock = false;
     foreach ($cur['rules'] as $r) {
