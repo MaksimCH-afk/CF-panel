@@ -108,10 +108,11 @@ function getSortIcon($column, $currentSort, $currentOrder) {
 }
 
 $sql = "
-    SELECT ca.*, cc.email, g.name AS group_name 
-    FROM cloudflare_accounts ca 
-    JOIN cloudflare_credentials cc ON ca.account_id = cc.id 
-    LEFT JOIN groups g ON ca.group_id = g.id 
+    SELECT ca.*, cc.email, g.name AS group_name,
+           (SELECT COUNT(*) FROM security_rules sr WHERE sr.domain_id = ca.id AND sr.rule_type = 'only_google') AS only_google_count
+    FROM cloudflare_accounts ca
+    JOIN cloudflare_credentials cc ON ca.account_id = cc.id
+    LEFT JOIN groups g ON ca.group_id = g.id
     WHERE " . implode(' AND ', $filters) . "
     ORDER BY $orderBy $sort_order 
     LIMIT ? OFFSET ?
@@ -395,6 +396,9 @@ function getDomainStatusInfo($status, $httpCode = null) {
                                         <i class="fas fa-<?php echo $statusInfo['icon']; ?> me-1"></i>
                                         <?php echo $statusInfo['name']; ?>
                                     </span>
+                                    <?php if (!empty($domain['only_google_count'])): ?>
+                                        <div class="mt-1"><span class="badge bg-light text-dark border" title="Применено правило «Только Google»"><i class="fab fa-google me-1"></i>Только гугл</span></div>
+                                    <?php endif; ?>
                                 </td>
                                 <td>
                                     <span class="badge bg-<?php echo $sslInfo['class']; ?>">
