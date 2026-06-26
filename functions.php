@@ -97,27 +97,33 @@ function tgClassifyStatus($code) {
 
 /**
  * Заводит базовые DNS-записи домена на выбранный сервер:
- *   A @   -> ip  (proxied)
- *   A *   -> ip  (DNS-only: прокси-wildcard доступен только на Enterprise)
- *   CNAME www -> корень домена (proxied)
- * Дубликаты Cloudflare отклоняет — это не критично. Возвращает ['created','errors'].
+ *   A @   -> ip
+ *   A *   -> ip
+ *   CNAME www -> корень домена
+ * По умолчанию ВСЕ записи создаются ПРОКСИРОВАННЫМИ (оранжевое облако). Если Cloudflare
+ * отклоняет проксирование (напр. wildcard-прокси доступен только на Enterprise) —
+ * запись пересоздаётся как DNS-only. Возвращает ['created','errors'].
  */
 function cfCreateOriginDnsRecords($pdo, $email, $apiKey, $zoneId, $domain, $ip, $proxies = [], $userId = null) {
     $records = [
-        ['type' => 'A',     'name' => $domain,          'content' => $ip,     'proxied' => true],
-        ['type' => 'A',     'name' => '*.' . $domain,   'content' => $ip,     'proxied' => false],
-        ['type' => 'CNAME', 'name' => 'www.' . $domain, 'content' => $domain, 'proxied' => true],
+        ['type' => 'A',     'name' => $domain,          'content' => $ip],
+        ['type' => 'A',     'name' => '*.' . $domain,   'content' => $ip],
+        ['type' => 'CNAME', 'name' => 'www.' . $domain, 'content' => $domain],
     ];
     $created = 0; $errors = [];
     foreach ($records as $r) {
-        $payload = ['type' => $r['type'], 'name' => $r['name'], 'content' => $r['content'], 'ttl' => 1, 'proxied' => $r['proxied']];
-        $resp = cloudflareApiRequestDetailed($pdo, $email, $apiKey, "zones/$zoneId/dns_records", 'POST', $payload, $proxies, $userId);
-        if (!empty($resp['success'])) {
-            $created++;
-        } else {
-            $msg = $resp['api_errors'][0]['message'] ?? ($resp['curl_error'] ?? 'ошибка');
-            $errors[] = $r['type'] . ' ' . $r['name'] . ': ' . $msg;
+        $ok = false; $lastMsg = '';
+        // Сначала пытаемся проксировать; при ошибке про прокси — откатываемся в DNS-only.
+        foreach ([true, false] as $proxied) {
+            $payload = ['type' => $r['type'], 'name' => $r['name'], 'content' => $r['content'], 'ttl' => 1, 'proxied' => $proxied];
+            $resp = cloudflareApiRequestDetailed($pdo, $email, $apiKey, "zones/$zoneId/dns_records", 'POST', $payload, $proxies, $userId);
+            if (!empty($resp['success'])) { $created++; $ok = true; break; }
+            $lastMsg = $resp['api_errors'][0]['message'] ?? ($resp['curl_error'] ?? 'ошибка');
+            $low = mb_strtolower($lastMsg);
+            // Ретраим как DNS-only только если ошибка связана с проксированием; иначе выходим.
+            if (mb_strpos($low, 'wildcard') === false && mb_strpos($low, 'proxi') === false && mb_strpos($low, 'enterprise') === false) break;
         }
+        if (!$ok) $errors[] = $r['type'] . ' ' . $r['name'] . ': ' . $lastMsg;
     }
     return ['created' => $created, 'errors' => $errors];
 }
