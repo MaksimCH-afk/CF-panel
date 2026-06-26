@@ -387,7 +387,7 @@ function getDomainStatusInfo($status, $httpCode = null) {
                                     <input type="checkbox" class="form-check-input domain-checkbox" value="<?php echo $domain['id']; ?>">
                                 </td>
                                 <td>
-                                    <div class="fw-bold"><?php echo htmlspecialchars($domain['domain']); ?></div>
+                                    <div class="fw-bold"><?php echo htmlspecialchars(mb_strtolower($domain['domain'])); ?></div>
                                     <small class="text-muted"><?php echo htmlspecialchars($domain['email']); ?></small>
                                 </td>
                                 <td>

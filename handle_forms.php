@@ -110,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['add_domain'])) {
         $groupId = !empty($_POST['group_id']) ? (int)$_POST['group_id'] : null;
         $accountId = !empty($_POST['account_id']) ? (int)$_POST['account_id'] : null;
-        $domain = trim($_POST['domain']);
+        $domain = mb_strtolower(trim($_POST['domain']));
         $serverIp = trim($_POST['server_ip']);
         $enableHttps = isset($_POST['enable_https']) ? 1 : 0;
         $minTls = isset($_POST['enable_tls13']) ? '1.3' : '1.0';
@@ -296,7 +296,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 
                 list($domain, $serverIp) = explode(';', $domainData, 2);
-                $domain = trim($domain);
+                $domain = mb_strtolower(trim($domain));
                 $serverIp = trim($serverIp);
                 
                 // Валидация домена
