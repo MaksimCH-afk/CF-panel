@@ -429,6 +429,7 @@ function getDomainStatusInfo($status, $httpCode = null) {
                                             <li><h6 class="dropdown-header">Управление</h6></li>
                                             <li><a class="dropdown-item" href="#" onclick="syncDomainNow(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')"><i class="fas fa-rotate me-2 text-primary"></i>Синхронизировать (IP/SSL/статус)</a></li>
                                             <li><a class="dropdown-item" href="#" onclick="openDnsManager(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')"><i class="fas fa-list me-2 text-primary"></i>DNS записи (A/CNAME/TXT/MX)</a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="showCloudflareNS(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')"><i class="fas fa-network-wired me-2 text-primary"></i>NS Cloudflare (для регистратора)</a></li>
                                             <li><a class="dropdown-item" href="#" onclick="checkSSL(<?php echo $domain['id']; ?>)"><i class="fas fa-shield-alt me-2 text-success"></i>Проверить SSL</a></li>
                                             <li><a class="dropdown-item" href="#" onclick="openAnalytics(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')"><i class="fas fa-chart-line me-2 text-info"></i>Аналитика</a></li>
                                             <li><hr class="dropdown-divider"></li>
@@ -668,6 +669,19 @@ function getDomainStatusInfo($status, $httpCode = null) {
 <!-- Include Modals -->
 <?php include 'modals.php'; ?>
 
+<!-- NS Cloudflare (выданные для зоны) -->
+<div class="modal fade" id="nsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-network-wired me-2"></i>NS Cloudflare — <span id="nsModalDomain"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="nsModalBody"></div>
+        </div>
+    </div>
+</div>
+
 <script>
 // Re-implementing necessary JS functions for the new layout
 function toggleSelectAll(forceState = null) {
@@ -777,6 +791,26 @@ async function bulkDeleteDomains() {
 }
 
 // Individual Actions
+// NS-серверы, ВЫДАННЫЕ Cloudflare для зоны (их надо прописать у регистратора —
+// не путать с текущими NS регистратора). Берём из объекта зоны через ns_api.php.
+let _nsClipboard = '';
+async function showCloudflareNS(id, name) {
+    try {
+        const res = await fetch('ns_api.php?domain_id=' + id);
+        const data = await res.json();
+        if (!data.success) { showToast(data.error || 'Не удалось получить NS', 'error'); return; }
+        _nsClipboard = data.clipboard || '';
+        const list = (data.ns_records || []).map(ns => '<li><code>' + ns + '</code></li>').join('');
+        document.getElementById('nsModalDomain').textContent = name;
+        document.getElementById('nsModalBody').innerHTML =
+            '<p class="text-muted small mb-2">Пропишите эти nameservers у <b>регистратора</b> домена — это NS, которые Cloudflare выдал для этой зоны:</p>' +
+            '<ul class="mb-2">' + list + '</ul>' +
+            '<button class="btn btn-outline-secondary btn-sm" onclick="copyNs()"><i class="fas fa-copy me-1"></i>Копировать</button>';
+        new bootstrap.Modal(document.getElementById('nsModal')).show();
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+function copyNs() { navigator.clipboard.writeText(_nsClipboard); showToast('Скопировано', 'success'); }
+
 async function purgeDomainCache(id, name) {
     if (!confirm(`Очистить весь кэш Cloudflare для ${name}?`)) return;
     try {

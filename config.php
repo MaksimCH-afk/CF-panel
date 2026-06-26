@@ -26,8 +26,8 @@ define('BASE_PATH', $basePath);
 define('ROOT_PATH', dirname(__FILE__) . '/');
 define('DB_PATH', ROOT_PATH . 'cloudflare_panel.db');
 
-// Версия панели (счётчик). Текущая — 30.0, следующие правки: 31.0, 32.0, ...
-define('PANEL_VERSION', '30.0');
+// Версия панели (счётчик). Текущая — 31.0, следующие правки: 32.0, 33.0, ...
+define('PANEL_VERSION', '31.0');
 
 // Перенаправление на HTTPS, если соединение не защищено (исключая localhost, CLI и API файлы)
 if (php_sapi_name() !== 'cli') {
