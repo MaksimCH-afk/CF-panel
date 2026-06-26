@@ -630,6 +630,7 @@ $stats = $statsStmt->fetch();
                                 </select>
                             </div>
                             <div id="onlyGoogleDomains" style="display:none; max-height:200px; overflow-y:auto;" class="border rounded p-2 mb-3 bg-white">
+                                <input type="text" class="form-control form-control-sm mb-2 position-sticky top-0" placeholder="Поиск домена…" oninput="filterDomainList(this, 'onlyGoogleDomains')" autocomplete="off" style="z-index:2;">
                                 <?php foreach ($domains as $domain): ?>
                                     <div class="form-check">
                                         <input class="form-check-input domain-checkbox" type="checkbox" value="<?php echo $domain['id']; ?>" data-group="<?php echo $domain['group_id']; ?>">

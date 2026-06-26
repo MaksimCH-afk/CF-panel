@@ -542,6 +542,7 @@ function getDomainStatusInfo($status, $httpCode = null) {
             <span class="fw-bold"><span id="selectedCount">0</span> выбрано</span>
             <div class="vr"></div>
             <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-info" onclick="bulkSyncDomains()"><i class="fas fa-rotate me-1"></i>Синхр.</button>
                 <button class="btn btn-sm btn-outline-primary" onclick="bulkUpdateDNS()">DNS IP</button>
                 <button class="btn btn-sm btn-outline-success" onclick="bulkCheckSSL()">SSL</button>
                 <button class="btn btn-sm btn-outline-info" onclick="openBulkWorkersModal()">Workers</button>
@@ -804,6 +805,21 @@ function searchDomains(e) { if(e.key === 'Enter') applyFilters(); }
 // Bulk Actions
 function getSelectedDomains() {
     return Array.from(document.querySelectorAll('.domain-checkbox:checked')).map(cb => cb.value);
+}
+async function bulkSyncDomains() {
+    const domains = getSelectedDomains();
+    if (!domains.length) { showToast('Не выбраны домены', 'warning'); return; }
+    showToast('Синхронизирую ' + domains.length + ' доменов…', 'info');
+    let ok = 0, fail = 0;
+    for (let i = 0; i < domains.length; i++) {
+        try {
+            const fd = new URLSearchParams({ action: 'sync_domain', domain_id: domains[i] });
+            const r = await fetch('sync_domains_api.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: fd }).then(r => r.json());
+            if (r && r.success) ok++; else fail++;
+        } catch (e) { fail++; }
+    }
+    showToast('Синхронизировано: ' + ok + (fail ? ', ошибок: ' + fail : ''), fail ? 'warning' : 'success');
+    setTimeout(() => location.reload(), 1000);
 }
 async function moveBulkToGroup() {
     const domains = getSelectedDomains();

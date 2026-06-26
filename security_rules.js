@@ -760,6 +760,16 @@ function deployWorker() {
 }
 
 // Получить область применения
+// Фильтр списка доменов по тексту (в чекбокс-списках областей применения).
+function filterDomainList(input, containerId) {
+    const q = (input.value || '').toLowerCase().trim();
+    document.querySelectorAll('#' + containerId + ' .form-check').forEach(function (row) {
+        const label = row.querySelector('.form-check-label');
+        const txt = label ? label.textContent.toLowerCase() : '';
+        row.style.display = (!q || txt.indexOf(q) !== -1) ? '' : 'none';
+    });
+}
+
 function getScope(prefix) {
     const $scopeEl = $(`#${prefix}Scope`);
     const scopeValue = $scopeEl.val();
