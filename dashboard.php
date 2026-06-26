@@ -799,17 +799,24 @@ async function showCloudflareNS(id, name) {
         const res = await fetch('ns_api.php?domain_id=' + id);
         const data = await res.json();
         if (!data.success) { showToast(data.error || 'Не удалось получить NS', 'error'); return; }
-        _nsClipboard = data.clipboard || '';
-        const list = (data.ns_records || []).map(ns => '<li><code>' + ns + '</code></li>').join('');
+        const rows = (data.ns_records || []).map(ns =>
+            '<div class="d-flex justify-content-between align-items-center border rounded px-2 py-1 mb-1">' +
+                '<code>' + ns + '</code>' +
+                '<button class="btn btn-outline-secondary btn-sm" onclick="copyText(\'' + ns + '\', this)"><i class="fas fa-copy"></i></button>' +
+            '</div>'
+        ).join('');
         document.getElementById('nsModalDomain').textContent = name;
         document.getElementById('nsModalBody').innerHTML =
-            '<p class="text-muted small mb-2">Пропишите эти nameservers у <b>регистратора</b> домена — это NS, которые Cloudflare выдал для этой зоны:</p>' +
-            '<ul class="mb-2">' + list + '</ul>' +
-            '<button class="btn btn-outline-secondary btn-sm" onclick="copyNs()"><i class="fas fa-copy me-1"></i>Копировать</button>';
+            '<p class="text-muted small mb-2">Пропишите эти nameservers у <b>регистратора</b> домена (вставляются по одному) — это NS, которые Cloudflare выдал для этой зоны:</p>' +
+            rows;
         new bootstrap.Modal(document.getElementById('nsModal')).show();
     } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
 }
-function copyNs() { navigator.clipboard.writeText(_nsClipboard); showToast('Скопировано', 'success'); }
+function copyText(text, btn) {
+    navigator.clipboard.writeText(text);
+    showToast('Скопировано: ' + text, 'success');
+    if (btn) { const o = btn.innerHTML; btn.innerHTML = '<i class="fas fa-check"></i>'; setTimeout(() => btn.innerHTML = o, 1200); }
+}
 
 async function purgeDomainCache(id, name) {
     if (!confirm(`Очистить весь кэш Cloudflare для ${name}?`)) return;
