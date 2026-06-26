@@ -458,11 +458,14 @@ function cfGetCustomRuleset($pdo, $email, $apiKey, $zoneId, $proxies = [], $user
  */
 function cfDetectOnlyGoogle($pdo, $email, $apiKey, $zoneId, $proxies = [], $userId = null) {
     if (empty($zoneId)) return null;
-    $cur = cfGetCustomRuleset($pdo, $email, $apiKey, $zoneId, $proxies, $userId);
-    if (!empty($cur['error'])) {
-        // Один ретрай на транзиентный сбой (429/5xx) — иначе бейдж бы промахивался на загруженном синке.
-        usleep(400000);
+    // До 3 попыток с нарастающим backoff — при массовом синке аккаунт упирается в rate-limit (429),
+    // иначе бейдж «Только Google» промахивался бы на части доменов.
+    $cur = null;
+    $delays = [0, 600000, 1500000]; // 0, 0.6s, 1.5s
+    foreach ($delays as $d) {
+        if ($d) usleep($d);
         $cur = cfGetCustomRuleset($pdo, $email, $apiKey, $zoneId, $proxies, $userId);
+        if (empty($cur['error'])) break;
     }
     if (!empty($cur['error'])) return null; // не смогли получить — состояние неизвестно
     $hasAllow = false; $hasBlock = false;
@@ -778,7 +781,12 @@ function cloudflareApiRequestDetailed($pdo, $email, $apiKey, $endpoint, $method 
     }
 
     if ($result['http_code'] !== 200) {
-        if ($userId) logAction($pdo, $userId, "API Request Failed (Detailed)", "Endpoint: $endpoint, HTTP Code: {$result['http_code']}, Response: " . substr($response, 0, 500));
+        // Безобидный 404 «could not find entrypoint ruleset» — у домена просто нет custom-правил.
+        // Это НЕ ошибка (так Cloudflare отвечает на пустую фазу), не засоряем лог.
+        $benignNoRuleset = ($result['http_code'] == 404 && strpos($response, 'could not find entrypoint ruleset') !== false);
+        if ($userId && !$benignNoRuleset) {
+            logAction($pdo, $userId, "API Request Failed (Detailed)", "Endpoint: $endpoint, HTTP Code: {$result['http_code']}, Response: " . substr($response, 0, 500));
+        }
         return $result;
     }
 
