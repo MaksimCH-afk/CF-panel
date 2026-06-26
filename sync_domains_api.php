@@ -136,16 +136,24 @@ function syncDomain($pdo, $userId) {
         );
         
         if ($dnsResponse['success'] && !empty($dnsResponse['data'])) {
-            // Собираем все уникальные IP
+            // origin IP и proxied — ТОЛЬКО по апекс-записи (name = домен), а не по всем A-записям.
+            // Иначе A-запись поддомена (напр. dnd.domain) меняет origin IP и шлёт ложный алерт.
             $ips = [];
             $proxiedFlag = null;
             $records = is_array($dnsResponse['data']) ? $dnsResponse['data'] : [$dnsResponse['data']];
             foreach ($records as $record) {
-                if (isset($record->content) && $record->content) {
+                if (isset($record->content) && $record->content && ($record->name ?? '') === $domain['domain']) {
                     $ips[] = $record->content;
-                    // proxied: предпочитаем апекс-запись (имя = домен), иначе первую A
-                    if ($proxiedFlag === null || ($record->name ?? '') === $domain['domain']) {
+                    if ($proxiedFlag === null) $proxiedFlag = !empty($record->proxied) ? 1 : 0;
+                }
+            }
+            // Фоллбэк: если апекс-A нет — берём первую A-запись.
+            if (empty($ips)) {
+                foreach ($records as $record) {
+                    if (isset($record->content) && $record->content) {
+                        $ips[] = $record->content;
                         $proxiedFlag = !empty($record->proxied) ? 1 : 0;
+                        break;
                     }
                 }
             }

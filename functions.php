@@ -884,13 +884,22 @@ function getDNSIPFromCloudflare($pdo, $domainId, $userId) {
             return ['success' => false, 'error' => 'A записи не найдены'];
         }
         
-        $dnsIp = $dnsResponse->result[0]->content;
-        // Флаг проксирования апекс-записи (оранжевое облако CF). Берём запись для корня домена,
-        // иначе первую A-запись.
-        $proxiedFlag = !empty($dnsResponse->result[0]->proxied) ? 1 : 0;
+        // origin IP и proxied берём ТОЛЬКО по апекс-записи (name = домен), а не по всем A-записям —
+        // иначе A-запись поддомена (напр. dnd.domain) ломает origin IP и шлёт ложный алерт.
+        $apexIps = [];
+        $proxiedFlag = null;
         foreach ($dnsResponse->result as $rec) {
-            if (($rec->name ?? '') === $domain['domain']) { $proxiedFlag = !empty($rec->proxied) ? 1 : 0; break; }
+            if (($rec->name ?? '') === $domain['domain']) {
+                $apexIps[] = $rec->content;
+                if ($proxiedFlag === null) $proxiedFlag = !empty($rec->proxied) ? 1 : 0;
+            }
         }
+        // Фоллбэк: если апекс-A нет — берём первую A-запись.
+        if (empty($apexIps)) {
+            $apexIps[] = $dnsResponse->result[0]->content;
+            $proxiedFlag = !empty($dnsResponse->result[0]->proxied) ? 1 : 0;
+        }
+        $dnsIp = implode(', ', array_values(array_unique($apexIps)));
         $allIPs = array_map(function($record) { return $record->content; }, $dnsResponse->result);
         
         logAction($pdo, $userId, "getDNSIP Records Found", "Domain: {$domain['domain']}, Primary IP: $dnsIp, All IPs: " . implode(', ', $allIPs));
