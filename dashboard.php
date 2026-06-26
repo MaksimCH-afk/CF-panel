@@ -432,6 +432,9 @@ function getDomainStatusInfo($status, $httpCode = null) {
                                     </select>
                                 </td>
                                 <td class="text-end">
+                                    <button class="btn btn-light btn-sm btn-icon me-1" type="button" title="Проверить текущие NS-серверы домена (живой DNS-запрос)" onclick="checkLiveNS(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars(mb_strtolower($domain['domain'])); ?>')">
+                                        <i class="fas fa-globe text-info"></i>
+                                    </button>
                                     <button class="btn btn-light btn-sm btn-icon me-1" type="button" title="Очистить кэш" onclick="purgeDomainCache(<?php echo $domain['id']; ?>, '<?php echo htmlspecialchars($domain['domain']); ?>')">
                                         <i class="fas fa-broom text-warning"></i>
                                     </button>
@@ -688,7 +691,7 @@ function getDomainStatusInfo($status, $httpCode = null) {
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title"><i class="fas fa-network-wired me-2"></i>NS Cloudflare — <span id="nsModalDomain"></span></h5>
+                <h5 class="modal-title"><i class="fas fa-network-wired me-2"></i><span id="nsModalKind">NS Cloudflare</span> — <span id="nsModalDomain"></span></h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body" id="nsModalBody"></div>
@@ -819,6 +822,7 @@ async function showCloudflareNS(id, name) {
                 '<button class="btn btn-outline-secondary btn-sm" onclick="copyText(\'' + ns + '\', this)"><i class="fas fa-copy"></i></button>' +
             '</div>'
         ).join('');
+        document.getElementById('nsModalKind').textContent = 'NS Cloudflare (целевые)';
         document.getElementById('nsModalDomain').textContent = name;
         document.getElementById('nsModalBody').innerHTML =
             '<p class="text-muted small mb-2">Пропишите эти nameservers у <b>регистратора</b> домена (вставляются по одному) — это NS, которые Cloudflare выдал для этой зоны:</p>' +
@@ -830,6 +834,25 @@ function copyText(text, btn) {
     navigator.clipboard.writeText(text);
     showToast('Скопировано: ' + text, 'success');
     if (btn) { const o = btn.innerHTML; btn.innerHTML = '<i class="fas fa-check"></i>'; setTimeout(() => btn.innerHTML = o, 1200); }
+}
+// Живая проверка текущих NS домена (публичный DNS через DoH) — на месте ли делегирование на Cloudflare.
+async function checkLiveNS(id, name) {
+    showToast('Проверяю текущие NS…', 'info');
+    try {
+        const res = await fetch('ns_api.php?mode=live&domain_id=' + id);
+        const data = await res.json();
+        if (!data.success) { showToast(data.error || 'Ошибка', 'error'); return; }
+        document.getElementById('nsModalKind').textContent = 'Текущие NS (живой DNS)';
+        document.getElementById('nsModalDomain').textContent = name;
+        let body = '';
+        if (data.on_cloudflare) body += '<div class="alert alert-success py-2 mb-2"><i class="fas fa-circle-check me-1"></i>NS переключены на <b>Cloudflare</b> — делегирование на месте.</div>';
+        else if ((data.live_ns || []).length) body += '<div class="alert alert-warning py-2 mb-2"><i class="fas fa-triangle-exclamation me-1"></i>NS <b>ещё НЕ на Cloudflare</b> (у регистратора стоят другие). Пропишите NS Cloudflare и подождите распространения.</div>';
+        else body += '<div class="alert alert-secondary py-2 mb-2">' + (data.note || 'NS не найдены') + '</div>';
+        body += '<p class="text-muted small mb-1">Текущие nameservers домена:</p>';
+        body += (data.live_ns || []).length ? ('<ul class="mb-0">' + data.live_ns.map(ns => '<li><code>' + ns + '</code></li>').join('') + '</ul>') : '';
+        document.getElementById('nsModalBody').innerHTML = body;
+        new bootstrap.Modal(document.getElementById('nsModal')).show();
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
 }
 
 async function purgeDomainCache(id, name) {

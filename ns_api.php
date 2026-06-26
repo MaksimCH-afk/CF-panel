@@ -24,6 +24,31 @@ try {
         throw new Exception('Домен не найден');
     }
 
+    // Режим LIVE: реальные (текущие) NS домена через публичный DNS (Cloudflare DoH).
+    // Показывает, переключены ли NS на Cloudflare у регистратора.
+    if (($_GET['mode'] ?? $_POST['mode'] ?? '') === 'live') {
+        $name = $domain['domain'];
+        $ch = curl_init('https://cloudflare-dns.com/dns-query?name=' . urlencode($name) . '&type=NS');
+        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 12, CURLOPT_HTTPHEADER => ['Accept: application/dns-json']]);
+        $resp = json_decode(curl_exec($ch), true);
+        curl_close($ch);
+        $live = [];
+        foreach ($resp['Answer'] ?? [] as $a) {
+            if ((int)($a['type'] ?? 0) === 2 && !empty($a['data'])) $live[] = rtrim(strtolower($a['data']), '.');
+        }
+        sort($live);
+        $onCf = !empty($live);
+        foreach ($live as $ns) { if (strpos($ns, '.ns.cloudflare.com') === false) { $onCf = false; break; } }
+        echo json_encode([
+            'success' => true,
+            'domain' => $name,
+            'live_ns' => $live,
+            'on_cloudflare' => $onCf,
+            'note' => empty($live) ? 'NS не найдены — домен не делегирован/не распространился в DNS' : '',
+        ]);
+        exit;
+    }
+
     $nsRecords = [];
     if (!empty($domain['ns_records'])) {
         $decoded = json_decode($domain['ns_records'], true);
