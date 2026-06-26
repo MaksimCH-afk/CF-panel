@@ -452,6 +452,26 @@ function cfGetCustomRuleset($pdo, $email, $apiKey, $zoneId, $proxies = [], $user
 }
 
 /**
+ * Определяет, применено ли в Cloudflare правило «Только Google» (по факту в зоне, а не по
+ * записи панели). Ищет пару: skip-правило для Googlebot + block-правило «всё остальное».
+ * Возвращает true/false, либо null — если не удалось получить ruleset (не меняем состояние).
+ */
+function cfDetectOnlyGoogle($pdo, $email, $apiKey, $zoneId, $proxies = [], $userId = null) {
+    if (empty($zoneId)) return null;
+    $cur = cfGetCustomRuleset($pdo, $email, $apiKey, $zoneId, $proxies, $userId);
+    if (!empty($cur['error'])) return null; // не смогли получить — состояние неизвестно
+    $hasAllow = false; $hasBlock = false;
+    foreach ($cur['rules'] as $r) {
+        $expr = trim($r['expression'] ?? '');
+        $act  = $r['action'] ?? '';
+        $desc = $r['description'] ?? '';
+        if ($act === 'skip'  && ($desc === 'Allow Google Bot' || stripos($expr, 'googlebot') !== false)) $hasAllow = true;
+        if ($act === 'block' && ($desc === 'Block all other'  || $expr === '(starts_with(http.request.uri, "/"))')) $hasBlock = true;
+    }
+    return $hasAllow && $hasBlock;
+}
+
+/**
  * Оставляет в правиле только поля, которые принимает PUT entrypoint
  * (без id/version/last_updated и пр. служебных).
  */

@@ -279,7 +279,28 @@ function syncDomain($pdo, $userId) {
         $result['http_code'] = 0;
         $result['domain_status'] = 'error';
     }
-    
+
+    // Сверяем фактическое состояние «Только Google» в Cloudflare с записью панели
+    // (правило могли применить/снять прямо в интерфейсе CF, минуя панель).
+    try {
+        if (!empty($zoneId)) {
+            $og = cfDetectOnlyGoogle($pdo, $domain['email'], $domain['api_key'], $zoneId, $proxies, $userId);
+            if ($og === true) {
+                $ex = $pdo->prepare("SELECT 1 FROM security_rules WHERE user_id = ? AND domain_id = ? AND rule_type = 'only_google'");
+                $ex->execute([$userId, $domainId]);
+                if (!$ex->fetchColumn()) {
+                    $pdo->prepare("INSERT INTO security_rules (user_id, domain_id, rule_type, rule_data, created_at) VALUES (?, ?, 'only_google', ?, datetime('now'))")
+                        ->execute([$userId, $domainId, json_encode(['rules' => 2, 'source' => 'cf'])]);
+                    $result['changes'][] = 'Только Google: обнаружено в CF';
+                }
+            } elseif ($og === false) {
+                $del = $pdo->prepare("DELETE FROM security_rules WHERE user_id = ? AND domain_id = ? AND rule_type = 'only_google'");
+                $del->execute([$userId, $domainId]);
+                if ($del->rowCount() > 0) $result['changes'][] = 'Только Google: снято (нет в CF)';
+            }
+        }
+    } catch (Exception $e) { /* реконсиляция не должна ронять синк */ }
+
     // Обновляем БД - проверяем наличие колонки http_code
     try {
         $updateSql = "
