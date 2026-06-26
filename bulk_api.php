@@ -209,6 +209,17 @@ try {
             echo json_encode(['success' => true, 'affected' => $affected, 'group_id' => $groupId]);
             break;
 
+        case 'create_group':
+            $name = trim($data['name'] ?? '');
+            if ($name === '') throw new Exception('Укажите название группы');
+            $pdo->prepare("INSERT OR IGNORE INTO groups (user_id, name) VALUES (?, ?)")->execute([$userId, $name]);
+            $gs = $pdo->prepare("SELECT id FROM groups WHERE user_id = ? AND name = ?");
+            $gs->execute([$userId, $name]);
+            $gid = (int)$gs->fetchColumn();
+            logAction($pdo, $userId, 'Группа создана', "Название: {$name}");
+            echo json_encode(['success' => true, 'group_id' => $gid, 'name' => $name]);
+            break;
+
         default:
             throw new Exception('Неизвестное действие');
     }

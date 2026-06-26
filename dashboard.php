@@ -545,6 +545,7 @@ function getDomainStatusInfo($status, $httpCode = null) {
                 <button class="btn btn-sm btn-outline-primary" onclick="bulkUpdateDNS()">DNS IP</button>
                 <button class="btn btn-sm btn-outline-success" onclick="bulkCheckSSL()">SSL</button>
                 <button class="btn btn-sm btn-outline-info" onclick="openBulkWorkersModal()">Workers</button>
+                <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#bulkGroupModal"><i class="fas fa-folder me-1"></i>Группа</button>
                 <button class="btn btn-sm btn-outline-danger" onclick="bulkDeleteDomains()">Удалить</button>
             </div>
             <button class="btn-close" onclick="toggleSelectAll(false)"></button>
@@ -686,6 +687,32 @@ function getDomainStatusInfo($status, $httpCode = null) {
 <!-- Include Modals -->
 <?php include 'modals.php'; ?>
 
+<!-- Массовое перемещение в группу -->
+<div class="modal fade" id="bulkGroupModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-folder me-2"></i>Переместить выбранные в группу</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <label class="form-label">Существующая группа</label>
+                <select id="bulkGroupSelect" class="form-select mb-3">
+                    <option value="">— без группы —</option>
+                    <?php foreach ($groups as $g): ?>
+                        <option value="<?php echo $g['id']; ?>"><?php echo htmlspecialchars($g['name']); ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <label class="form-label">…или создать новую</label>
+                <input id="bulkNewGroup" class="form-control" placeholder="Название новой группы (приоритетнее выбора выше)">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" data-bs-dismiss="modal" onclick="moveBulkToGroup()"><i class="fas fa-check me-1"></i>Переместить</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- NS Cloudflare (выданные для зоны) -->
 <div class="modal fade" id="nsModal" tabindex="-1">
     <div class="modal-dialog">
@@ -777,6 +804,25 @@ function searchDomains(e) { if(e.key === 'Enter') applyFilters(); }
 // Bulk Actions
 function getSelectedDomains() {
     return Array.from(document.querySelectorAll('.domain-checkbox:checked')).map(cb => cb.value);
+}
+async function moveBulkToGroup() {
+    const domains = getSelectedDomains();
+    if (!domains.length) { showToast('Не выбраны домены', 'warning'); return; }
+    let groupId = document.getElementById('bulkGroupSelect').value;
+    const newName = document.getElementById('bulkNewGroup').value.trim();
+    try {
+        if (newName) {
+            const cg = await fetch('bulk_api.php', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'create_group', name: newName }) }).then(r => r.json());
+            if (!cg.success) { showToast('Ошибка создания группы: ' + (cg.error || ''), 'error'); return; }
+            groupId = cg.group_id;
+        }
+        const res = await fetch('bulk_api.php', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'bulk_change_group', domain_ids: domains, group_id: groupId }) }).then(r => r.json());
+        if (res.success) {
+            showToast('Перемещено доменов: ' + res.affected + (newName ? ' → новая группа «' + newName + '»' : ''), 'success');
+            document.getElementById('bulkNewGroup').value = '';
+            setTimeout(() => location.reload(), 900);
+        } else showToast('Ошибка: ' + (res.error || ''), 'error');
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
 }
 
 async function bulkUpdateDNS() {
