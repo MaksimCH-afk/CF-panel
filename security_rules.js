@@ -380,10 +380,10 @@ function initializeScopeSelectors() {
     $('[id$="Scope"]').on('change', function() {
         const scope = $(this).val();
         const prefix = $(this).attr('id').replace('Scope', '');
-        
+
         $(`#${prefix}Group`).toggle(scope === 'group');
         $(`#${prefix}Domains`).toggle(scope === 'selected');
-    });
+    }).trigger('change'); // применить текущее значение сразу (напр. дефолт «Выбранные домены»)
 }
 
 // Инициализация селектора действия реферрера

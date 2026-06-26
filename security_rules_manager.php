@@ -618,7 +618,7 @@ $stats = $statsStmt->fetch();
                                 <select class="form-select" id="onlyGoogleScope">
                                     <option value="all">Все домены (<?php echo count($domains); ?>)</option>
                                     <option value="group">Выбранная группа</option>
-                                    <option value="selected">Выбранные домены</option>
+                                    <option value="selected" selected>Выбранные домены</option>
                                 </select>
                             </div>
                             <div id="onlyGoogleGroup" style="display:none;" class="mb-3">
