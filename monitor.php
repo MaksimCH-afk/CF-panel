@@ -114,15 +114,30 @@ $today = date('Y-m-d');
 if (tgAlertOn($pdo, 'expiry') && appGetSetting($pdo, 'tg_last_digest', '') !== $today) {
     $lines = [];
 
-    $exp = $pdo->prepare("SELECT domain, whois_days_until_expiry d FROM cloudflare_accounts
-        WHERE user_id = ? AND whois_days_until_expiry IS NOT NULL AND whois_days_until_expiry <= 30
-        ORDER BY whois_days_until_expiry ASC");
+    // Дни до истечения считаем ИЗ ДАТЫ whois_expiry_date (она фиксирована), а не из
+    // сохранённого счётчика — иначе число «зависает» (считалось при последней проверке WHOIS).
+    // Заодно освежаем сохранённый счётчик, чтобы и на вкладке WHOIS было актуально.
+    try {
+        $pdo->exec("UPDATE cloudflare_accounts
+            SET whois_days_until_expiry = CAST((julianday(whois_expiry_date) - julianday('now')) AS INTEGER)
+            WHERE whois_expiry_date IS NOT NULL AND whois_expiry_date != ''");
+    } catch (Exception $e) {}
+
+    $exp = $pdo->prepare("SELECT domain, whois_expiry_date FROM cloudflare_accounts
+        WHERE user_id = ? AND whois_expiry_date IS NOT NULL AND whois_expiry_date != ''");
     $exp->execute([$userId]);
-    $domExp = $exp->fetchAll();
+    $domExp = [];
+    foreach ($exp as $r) {
+        $t = strtotime($r['whois_expiry_date']);
+        if (!$t) continue;
+        $days = (int) floor(($t - time()) / 86400);
+        if ($days <= 30) $domExp[] = ['domain' => $r['domain'], 'd' => $days];
+    }
+    usort($domExp, function ($a, $b) { return $a['d'] <=> $b['d']; });
     if ($domExp) {
         $lines[] = "🌐 <b>Домены (WHOIS) истекают:</b>";
         foreach ($domExp as $r) {
-            $d = (int)$r['d'];
+            $d = $r['d'];
             $tag = $d <= 0 ? '❌ ИСТЁК' : ($d <= 7 ? "⏰ {$d} дн" : "{$d} дн");
             $lines[] = "   • {$r['domain']} — {$tag}";
         }

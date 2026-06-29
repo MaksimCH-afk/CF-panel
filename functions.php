@@ -856,14 +856,18 @@ function getDNSIPFromCloudflare($pdo, $domainId, $userId) {
         
         $proxies = getProxies($pdo, $userId);
         
-        // Получаем зону
+        // Получаем зону по имени. ВАЖНО: lookup по имени бывает транзиентно пустым
+        // (rate-limit/таймаут) — нельзя на основании этого решать «зона не найдена», если
+        // у нас уже есть сохранённый zone_id. Иначе шлётся ложный алерт «зона не найдена».
         $zoneResponse = cloudflareApiRequest($pdo, $domain['email'], $domain['api_key'], "zones?name={$domain['domain']}", 'GET', [], $proxies, $userId);
-        if (!$zoneResponse || empty($zoneResponse->result)) {
+        if ($zoneResponse && !empty($zoneResponse->result)) {
+            $zoneId = $zoneResponse->result[0]->id;
+        } elseif (!empty($domain['zone_id'])) {
+            $zoneId = $domain['zone_id']; // фоллбэк на сохранённый — lookup мог не вернуть транзиентно
+        } else {
             logAction($pdo, $userId, "getDNSIP Error", "Zone not found in Cloudflare for domain: {$domain['domain']}");
             return ['success' => false, 'error' => 'Зона не найдена в Cloudflare'];
         }
-        
-        $zoneId = $zoneResponse->result[0]->id;
         logAction($pdo, $userId, "getDNSIP Zone Found", "Domain: {$domain['domain']}, Zone ID: $zoneId");
         
         // Обновляем zone_id в базе если его нет
