@@ -13,6 +13,7 @@
  */
 require_once 'config.php';
 require_once 'functions.php';
+require_once 'whois_lib.php'; // checkDomainWhois и пр. — для фонового обновления WHOIS
 
 // Авторизация как у очереди
 $token = $_GET['auth_token'] ?? $_POST['auth_token'] ?? '';
